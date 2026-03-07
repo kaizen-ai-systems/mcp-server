@@ -168,6 +168,9 @@ func (s *Server) callAkumaQuery(ctx context.Context, args map[string]interface{}
 	if v, ok := args["maxRows"]; ok {
 		payload["maxRows"] = v
 	}
+	if v, ok := args["sourceId"]; ok {
+		payload["sourceId"] = v
+	}
 	if v, ok := args["guardrails"]; ok {
 		payload["guardrails"] = v
 	}
@@ -188,9 +191,20 @@ func (s *Server) callAkumaSchema(ctx context.Context, args map[string]interface{
 	if !ok {
 		return nil, fmt.Errorf("tables is required")
 	}
+	dialect, _ := args["dialect"].(string)
+	if strings.TrimSpace(dialect) == "" {
+		return nil, fmt.Errorf("dialect is required")
+	}
 
 	payload := map[string]interface{}{
-		"tables": tables,
+		"dialect": dialect,
+		"tables":  tables,
+	}
+	if sourceID, ok := args["sourceId"]; ok {
+		payload["sourceId"] = sourceID
+	}
+	if name, ok := args["name"]; ok {
+		payload["name"] = name
 	}
 	if version, ok := args["version"]; ok {
 		payload["version"] = version
