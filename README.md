@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 
-This package is the MCP source of truth in the monorepo and is subtree-published to:
+This package is the MCP source of truth in the monorepo and is snapshot-published to the public repo via the manifest-driven public publish workflow:
 
 - <https://github.com/kaizen-ai-systems/mcp-server>
 
@@ -12,6 +12,7 @@ This package is the MCP source of truth in the monorepo and is subtree-published
 - `akuma.explain`
 - `akuma.schema`
 - `enzan.summary`
+- `enzan.costs_by_model`
 - `enzan.burn`
 - `sozo.generate`
 - `sozo.schemas`

@@ -60,6 +60,17 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.costs_by_model",
+			Description: "Break down Akuma API spend by model for a time window.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"window": map[string]interface{}{"type": "string", "enum": []string{"1h", "24h", "7d", "30d"}},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.burn",
 			Description: "Get current burn rate in USD/hour.",
 			InputSchema: map[string]interface{}{

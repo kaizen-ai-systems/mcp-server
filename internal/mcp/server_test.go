@@ -19,6 +19,20 @@ func TestToolDefinitionsIncludesAkumaSchema(t *testing.T) {
 	}
 }
 
+func TestToolDefinitionsIncludesEnzanCostsByModel(t *testing.T) {
+	tools := toolDefinitions()
+	found := false
+	for _, tool := range tools {
+		if tool.Name == "enzan.costs_by_model" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected enzan.costs_by_model tool in tools/list response")
+	}
+}
+
 func TestHandleToolCallUnknownTool(t *testing.T) {
 	s := &Server{}
 	raw, err := json.Marshal(toolsCallParams{
