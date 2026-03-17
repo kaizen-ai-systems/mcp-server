@@ -33,6 +33,26 @@ func TestToolDefinitionsIncludesEnzanCostsByModel(t *testing.T) {
 	}
 }
 
+func TestToolDefinitionsIncludeEnzanPricingTools(t *testing.T) {
+	tools := toolDefinitions()
+	required := map[string]bool{
+		"enzan.pricing_models":  false,
+		"enzan.set_model_pricing": false,
+		"enzan.pricing_gpus":    false,
+		"enzan.set_gpu_pricing": false,
+	}
+	for _, tool := range tools {
+		if _, ok := required[tool.Name]; ok {
+			required[tool.Name] = true
+		}
+	}
+	for name, found := range required {
+		if !found {
+			t.Fatalf("expected %s tool in tools/list response", name)
+		}
+	}
+}
+
 func TestHandleToolCallUnknownTool(t *testing.T) {
 	s := &Server{}
 	raw, err := json.Marshal(toolsCallParams{

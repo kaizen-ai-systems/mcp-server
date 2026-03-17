@@ -13,6 +13,10 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 - `akuma.schema`
 - `enzan.summary`
 - `enzan.costs_by_model`
+- `enzan.pricing_models`
+- `enzan.set_model_pricing`
+- `enzan.pricing_gpus`
+- `enzan.set_gpu_pricing`
 - `enzan.burn`
 - `sozo.generate`
 - `sozo.schemas`

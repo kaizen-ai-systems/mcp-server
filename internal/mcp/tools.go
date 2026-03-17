@@ -71,6 +71,59 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.pricing_models",
+			Description: "List configured LLM pricing entries.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.set_model_pricing",
+			Description: "Upsert one LLM pricing entry (admin API key required).",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"provider":                     map[string]interface{}{"type": "string"},
+					"model":                        map[string]interface{}{"type": "string"},
+					"display_name":                 map[string]interface{}{"type": "string"},
+					"input_cost_per_1k_tokens_usd": map[string]interface{}{"type": "number"},
+					"output_cost_per_1k_tokens_usd": map[string]interface{}{"type": "number"},
+					"currency":                     map[string]interface{}{"type": "string"},
+					"active":                       map[string]interface{}{"type": "boolean"},
+				},
+				"required":             []string{"provider", "model", "input_cost_per_1k_tokens_usd", "output_cost_per_1k_tokens_usd"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.pricing_gpus",
+			Description: "List configured GPU pricing entries.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.set_gpu_pricing",
+			Description: "Upsert one GPU pricing entry (admin API key required).",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"provider":        map[string]interface{}{"type": "string"},
+					"gpu_type":        map[string]interface{}{"type": "string"},
+					"display_name":    map[string]interface{}{"type": "string"},
+					"hourly_rate_usd": map[string]interface{}{"type": "number"},
+					"currency":        map[string]interface{}{"type": "string"},
+					"active":          map[string]interface{}{"type": "boolean"},
+				},
+				"required":             []string{"provider", "gpu_type", "hourly_rate_usd"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.burn",
 			Description: "Get current burn rate in USD/hour.",
 			InputSchema: map[string]interface{}{

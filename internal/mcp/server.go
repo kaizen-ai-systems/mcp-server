@@ -126,6 +126,14 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.callEnzanSummary(ctx, params.Arguments)
 	case "enzan.costs_by_model":
 		data, err = s.callEnzanCostsByModel(ctx, params.Arguments)
+	case "enzan.pricing_models":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/models", nil)
+	case "enzan.set_model_pricing":
+		data, err = s.callEnzanSetModelPricing(ctx, params.Arguments)
+	case "enzan.pricing_gpus":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/gpus", nil)
+	case "enzan.set_gpu_pricing":
+		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
 	case "enzan.burn":
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/burn", nil)
 	case "sozo.generate":
@@ -235,6 +243,60 @@ func (s *Server) callEnzanCostsByModel(ctx context.Context, args map[string]inte
 		payload["window"] = v
 	}
 	return s.client.call(ctx, "POST", "/v1/enzan/costs/by-model", payload)
+}
+
+func (s *Server) callEnzanSetModelPricing(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	provider, _ := args["provider"].(string)
+	model, _ := args["model"].(string)
+	if strings.TrimSpace(provider) == "" {
+		return nil, fmt.Errorf("provider is required")
+	}
+	if strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+	if _, ok := args["input_cost_per_1k_tokens_usd"]; !ok {
+		return nil, fmt.Errorf("input_cost_per_1k_tokens_usd is required")
+	}
+	if _, ok := args["output_cost_per_1k_tokens_usd"]; !ok {
+		return nil, fmt.Errorf("output_cost_per_1k_tokens_usd is required")
+	}
+	payload := map[string]interface{}{
+		"provider":                     provider,
+		"model":                        model,
+		"input_cost_per_1k_tokens_usd": args["input_cost_per_1k_tokens_usd"],
+		"output_cost_per_1k_tokens_usd": args["output_cost_per_1k_tokens_usd"],
+	}
+	for _, key := range []string{"display_name", "currency", "active"} {
+		if v, ok := args[key]; ok {
+			payload[key] = v
+		}
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/pricing/models", payload)
+}
+
+func (s *Server) callEnzanSetGPUPricing(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	provider, _ := args["provider"].(string)
+	gpuType, _ := args["gpu_type"].(string)
+	if strings.TrimSpace(provider) == "" {
+		return nil, fmt.Errorf("provider is required")
+	}
+	if strings.TrimSpace(gpuType) == "" {
+		return nil, fmt.Errorf("gpu_type is required")
+	}
+	if _, ok := args["hourly_rate_usd"]; !ok {
+		return nil, fmt.Errorf("hourly_rate_usd is required")
+	}
+	payload := map[string]interface{}{
+		"provider":        provider,
+		"gpu_type":        gpuType,
+		"hourly_rate_usd": args["hourly_rate_usd"],
+	}
+	for _, key := range []string{"display_name", "currency", "active"} {
+		if v, ok := args[key]; ok {
+			payload[key] = v
+		}
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/pricing/gpus", payload)
 }
 
 func (s *Server) callSozoGenerate(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
