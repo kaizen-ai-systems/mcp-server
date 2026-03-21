@@ -134,6 +134,8 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/gpus", nil)
 	case "enzan.set_gpu_pricing":
 		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
+	case "enzan.optimize":
+		data, err = s.callEnzanOptimize(ctx, params.Arguments)
 	case "enzan.burn":
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/burn", nil)
 	case "sozo.generate":
@@ -243,6 +245,16 @@ func (s *Server) callEnzanCostsByModel(ctx context.Context, args map[string]inte
 		payload["window"] = v
 	}
 	return s.client.call(ctx, "POST", "/v1/enzan/costs/by-model", payload)
+}
+
+func (s *Server) callEnzanOptimize(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"window": "30d",
+	}
+	if v, ok := args["window"]; ok {
+		payload["window"] = v
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/optimize", payload)
 }
 
 func (s *Server) callEnzanSetModelPricing(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {

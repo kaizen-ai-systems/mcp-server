@@ -124,6 +124,17 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.optimize",
+			Description: "Generate cost optimization recommendations for a time window.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"window": map[string]interface{}{"type": "string", "enum": []string{"1h", "24h", "7d", "30d"}},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.burn",
 			Description: "Get current burn rate in USD/hour.",
 			InputSchema: map[string]interface{}{
