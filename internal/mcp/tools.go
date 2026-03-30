@@ -135,6 +135,20 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.chat",
+			Description: "Ask a question about your GPU and API costs. Supports multi-turn conversations with optional time window.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message":        map[string]interface{}{"type": "string", "description": "Your question about costs"},
+					"conversationId": map[string]interface{}{"type": "string", "description": "Optional conversation ID for follow-ups"},
+					"window":         map[string]interface{}{"type": "string", "enum": []string{"1h", "24h", "7d", "30d"}, "description": "Optional time window; inferred from message if omitted"},
+				},
+				"required":             []string{"message"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.burn",
 			Description: "Get current burn rate in USD/hour.",
 			InputSchema: map[string]interface{}{

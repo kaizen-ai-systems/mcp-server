@@ -14,6 +14,7 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 - `enzan.summary`
 - `enzan.costs_by_model`
 - `enzan.optimize`
+- `enzan.chat`
 - `enzan.pricing_models`
 - `enzan.set_model_pricing`
 - `enzan.pricing_gpus`
