@@ -85,13 +85,13 @@ func toolDefinitions() []toolDefinition {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"provider":                     map[string]interface{}{"type": "string"},
-					"model":                        map[string]interface{}{"type": "string"},
-					"display_name":                 map[string]interface{}{"type": "string"},
-					"input_cost_per_1k_tokens_usd": map[string]interface{}{"type": "number"},
+					"provider":                      map[string]interface{}{"type": "string"},
+					"model":                         map[string]interface{}{"type": "string"},
+					"display_name":                  map[string]interface{}{"type": "string"},
+					"input_cost_per_1k_tokens_usd":  map[string]interface{}{"type": "number"},
 					"output_cost_per_1k_tokens_usd": map[string]interface{}{"type": "number"},
-					"currency":                     map[string]interface{}{"type": "string"},
-					"active":                       map[string]interface{}{"type": "boolean"},
+					"currency":                      map[string]interface{}{"type": "string"},
+					"active":                        map[string]interface{}{"type": "boolean"},
 				},
 				"required":             []string{"provider", "model", "input_cost_per_1k_tokens_usd", "output_cost_per_1k_tokens_usd"},
 				"additionalProperties": false,
@@ -131,6 +131,62 @@ func toolDefinitions() []toolDefinition {
 				"properties": map[string]interface{}{
 					"window": map[string]interface{}{"type": "string", "enum": []string{"1h", "24h", "7d", "30d"}},
 				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.alert_events",
+			Description: "List recent Enzan alert events.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "number"},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.alert_deliveries",
+			Description: "List recent Enzan alert deliveries.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "number"},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.alert_endpoints",
+			Description: "List configured Enzan alert delivery webhook endpoints.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.create_alert_endpoint",
+			Description: "Create one Enzan alert delivery webhook endpoint.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"targetUrl":     map[string]interface{}{"type": "string"},
+					"signingSecret": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"targetUrl"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.delete_alert_endpoint",
+			Description: "Delete one Enzan alert delivery webhook endpoint by id.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"id"},
 				"additionalProperties": false,
 			},
 		},

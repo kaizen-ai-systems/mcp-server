@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -136,6 +137,16 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
 	case "enzan.optimize":
 		data, err = s.callEnzanOptimize(ctx, params.Arguments)
+	case "enzan.alert_events":
+		data, err = s.callEnzanAlertEvents(ctx, params.Arguments)
+	case "enzan.alert_deliveries":
+		data, err = s.callEnzanAlertDeliveries(ctx, params.Arguments)
+	case "enzan.alert_endpoints":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/alerts/endpoints", nil)
+	case "enzan.create_alert_endpoint":
+		data, err = s.callEnzanCreateAlertEndpoint(ctx, params.Arguments)
+	case "enzan.delete_alert_endpoint":
+		data, err = s.callEnzanDeleteAlertEndpoint(ctx, params.Arguments)
 	case "enzan.chat":
 		data, err = s.callEnzanChat(ctx, params.Arguments)
 	case "enzan.burn":
@@ -190,6 +201,57 @@ func (s *Server) callAkumaQuery(ctx context.Context, args map[string]interface{}
 	}
 
 	return s.client.call(ctx, "POST", "/v1/akuma/query", payload)
+}
+
+func (s *Server) callEnzanCreateAlertEndpoint(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	targetURL, _ := args["targetUrl"].(string)
+	if strings.TrimSpace(targetURL) == "" {
+		return nil, fmt.Errorf("targetUrl is required")
+	}
+	payload := map[string]interface{}{
+		"targetUrl": targetURL,
+	}
+	if signingSecret, ok := args["signingSecret"]; ok {
+		payload["signingSecret"] = signingSecret
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/alerts/endpoints", payload)
+}
+
+func (s *Server) callEnzanAlertEvents(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	path := "/v1/enzan/alerts/events"
+	if limit, ok := numericToolArg(args, "limit"); ok && limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	return s.client.call(ctx, "GET", path, nil)
+}
+
+func (s *Server) callEnzanAlertDeliveries(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	path := "/v1/enzan/alerts/deliveries"
+	if limit, ok := numericToolArg(args, "limit"); ok && limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	return s.client.call(ctx, "GET", path, nil)
+}
+
+func (s *Server) callEnzanDeleteAlertEndpoint(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	return s.client.call(ctx, "DELETE", "/v1/enzan/alerts/endpoints/"+url.PathEscape(id), nil)
+}
+
+func numericToolArg(args map[string]interface{}, key string) (int, bool) {
+	switch value := args[key].(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	default:
+		return 0, false
+	}
 }
 
 func (s *Server) callAkumaExplain(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
@@ -289,9 +351,9 @@ func (s *Server) callEnzanSetModelPricing(ctx context.Context, args map[string]i
 		return nil, fmt.Errorf("output_cost_per_1k_tokens_usd is required")
 	}
 	payload := map[string]interface{}{
-		"provider":                     provider,
-		"model":                        model,
-		"input_cost_per_1k_tokens_usd": args["input_cost_per_1k_tokens_usd"],
+		"provider":                      provider,
+		"model":                         model,
+		"input_cost_per_1k_tokens_usd":  args["input_cost_per_1k_tokens_usd"],
 		"output_cost_per_1k_tokens_usd": args["output_cost_per_1k_tokens_usd"],
 	}
 	for _, key := range []string{"display_name", "currency", "active"} {
