@@ -137,6 +137,14 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
 	case "enzan.optimize":
 		data, err = s.callEnzanOptimize(ctx, params.Arguments)
+	case "enzan.alerts":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/alerts", nil)
+	case "enzan.create_alert":
+		data, err = s.callEnzanCreateAlert(ctx, params.Arguments)
+	case "enzan.update_alert":
+		data, err = s.callEnzanUpdateAlert(ctx, params.Arguments)
+	case "enzan.delete_alert":
+		data, err = s.callEnzanDeleteAlert(ctx, params.Arguments)
 	case "enzan.alert_events":
 		data, err = s.callEnzanAlertEvents(ctx, params.Arguments)
 	case "enzan.alert_deliveries":
@@ -145,6 +153,8 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/alerts/endpoints", nil)
 	case "enzan.create_alert_endpoint":
 		data, err = s.callEnzanCreateAlertEndpoint(ctx, params.Arguments)
+	case "enzan.update_alert_endpoint":
+		data, err = s.callEnzanUpdateAlertEndpoint(ctx, params.Arguments)
 	case "enzan.delete_alert_endpoint":
 		data, err = s.callEnzanDeleteAlertEndpoint(ctx, params.Arguments)
 	case "enzan.chat":
@@ -217,6 +227,61 @@ func (s *Server) callEnzanCreateAlertEndpoint(ctx context.Context, args map[stri
 	return s.client.call(ctx, "POST", "/v1/enzan/alerts/endpoints", payload)
 }
 
+func (s *Server) callEnzanCreateAlert(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	name, _ := args["name"].(string)
+	alertType, _ := args["type"].(string)
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if strings.TrimSpace(alertType) == "" {
+		return nil, fmt.Errorf("type is required")
+	}
+	payload := map[string]interface{}{
+		"name": name,
+		"type": alertType,
+	}
+	if id, ok := args["id"]; ok {
+		payload["id"] = id
+	}
+	if threshold, ok := args["threshold"]; ok {
+		payload["threshold"] = threshold
+	}
+	if window, ok := args["window"]; ok {
+		payload["window"] = window
+	}
+	if labels, ok := args["labels"]; ok {
+		payload["labels"] = labels
+	}
+	if enabled, ok := args["enabled"]; ok {
+		payload["enabled"] = enabled
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/alerts", payload)
+}
+
+func (s *Server) callEnzanUpdateAlert(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	payload := map[string]interface{}{}
+	if name, ok := args["name"]; ok {
+		payload["name"] = name
+	}
+	if threshold, ok := args["threshold"]; ok {
+		payload["threshold"] = threshold
+	}
+	if window, ok := args["window"]; ok {
+		payload["window"] = window
+	}
+	if labels, ok := args["labels"]; ok {
+		payload["labels"] = labels
+	}
+	if enabled, ok := args["enabled"]; ok {
+		payload["enabled"] = enabled
+	}
+	return s.client.call(ctx, "PATCH", "/v1/enzan/alerts/"+url.PathEscape(id), payload)
+}
+
 func (s *Server) callEnzanAlertEvents(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
 	path := "/v1/enzan/alerts/events"
 	if limit, ok := numericToolArg(args, "limit"); ok && limit > 0 {
@@ -231,6 +296,32 @@ func (s *Server) callEnzanAlertDeliveries(ctx context.Context, args map[string]i
 		path = fmt.Sprintf("%s?limit=%d", path, limit)
 	}
 	return s.client.call(ctx, "GET", path, nil)
+}
+
+func (s *Server) callEnzanDeleteAlert(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	return s.client.call(ctx, "DELETE", "/v1/enzan/alerts/"+url.PathEscape(id), nil)
+}
+
+func (s *Server) callEnzanUpdateAlertEndpoint(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	payload := map[string]interface{}{}
+	if targetURL, ok := args["targetUrl"]; ok {
+		payload["targetUrl"] = targetURL
+	}
+	if signingSecret, ok := args["signingSecret"]; ok {
+		payload["signingSecret"] = signingSecret
+	}
+	if enabled, ok := args["enabled"]; ok {
+		payload["enabled"] = enabled
+	}
+	return s.client.call(ctx, "PATCH", "/v1/enzan/alerts/endpoints/"+url.PathEscape(id), payload)
 }
 
 func (s *Server) callEnzanDeleteAlertEndpoint(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {

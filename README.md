@@ -14,10 +14,15 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 - `enzan.summary`
 - `enzan.costs_by_model`
 - `enzan.optimize`
+- `enzan.alerts`
+- `enzan.create_alert`
+- `enzan.update_alert`
+- `enzan.delete_alert`
 - `enzan.alert_events`
 - `enzan.alert_deliveries`
 - `enzan.alert_endpoints`
 - `enzan.create_alert_endpoint`
+- `enzan.update_alert_endpoint`
 - `enzan.delete_alert_endpoint`
 - `enzan.chat`
 - `enzan.pricing_models`

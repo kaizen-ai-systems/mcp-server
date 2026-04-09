@@ -135,6 +135,68 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.alerts",
+			Description: "List configured Enzan alert rules.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.create_alert",
+			Description: "Create one Enzan alert rule.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":        map[string]interface{}{"type": "string"},
+					"name":      map[string]interface{}{"type": "string"},
+					"type":      map[string]interface{}{"type": "string", "enum": []string{"cost_threshold", "budget_exceeded", "optimization_available", "pricing_change", "daily_summary"}},
+					"threshold": map[string]interface{}{"type": "number"},
+					"window":    map[string]interface{}{"type": "string"},
+					"labels": map[string]interface{}{
+						"type": "object",
+						"additionalProperties": map[string]interface{}{"type": "string"},
+					},
+					"enabled":   map[string]interface{}{"type": "boolean"},
+				},
+				"required":             []string{"name", "type"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.update_alert",
+			Description: "Update one Enzan alert rule by id.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":        map[string]interface{}{"type": "string"},
+					"name":      map[string]interface{}{"type": "string"},
+					"threshold": map[string]interface{}{"type": "number"},
+					"window":    map[string]interface{}{"type": "string"},
+					"labels": map[string]interface{}{
+						"type": "object",
+						"additionalProperties": map[string]interface{}{"type": "string"},
+					},
+					"enabled":   map[string]interface{}{"type": "boolean"},
+				},
+				"required":             []string{"id"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.delete_alert",
+			Description: "Delete one Enzan alert rule by id.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"id"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.alert_events",
 			Description: "List recent Enzan alert events.",
 			InputSchema: map[string]interface{}{
@@ -175,6 +237,21 @@ func toolDefinitions() []toolDefinition {
 					"signingSecret": map[string]interface{}{"type": "string"},
 				},
 				"required":             []string{"targetUrl"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.update_alert_endpoint",
+			Description: "Update one Enzan alert delivery webhook endpoint by id.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":            map[string]interface{}{"type": "string"},
+					"targetUrl":     map[string]interface{}{"type": "string"},
+					"signingSecret": map[string]interface{}{"type": "string"},
+					"enabled":       map[string]interface{}{"type": "boolean"},
+				},
+				"required":             []string{"id"},
 				"additionalProperties": false,
 			},
 		},
