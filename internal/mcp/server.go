@@ -127,6 +127,12 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.callEnzanSummary(ctx, params.Arguments)
 	case "enzan.costs_by_model":
 		data, err = s.callEnzanCostsByModel(ctx, params.Arguments)
+	case "enzan.routing":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/routing", nil)
+	case "enzan.set_routing":
+		data, err = s.callEnzanSetRouting(ctx, params.Arguments)
+	case "enzan.routing_savings":
+		data, err = s.callEnzanRoutingSavings(ctx, params.Arguments)
 	case "enzan.pricing_models":
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/models", nil)
 	case "enzan.set_model_pricing":
@@ -225,6 +231,34 @@ func (s *Server) callEnzanCreateAlertEndpoint(ctx context.Context, args map[stri
 		payload["signingSecret"] = signingSecret
 	}
 	return s.client.call(ctx, "POST", "/v1/enzan/alerts/endpoints", payload)
+}
+
+func (s *Server) callEnzanSetRouting(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	enabled, ok := args["enabled"]
+	if !ok {
+		return nil, fmt.Errorf("enabled is required")
+	}
+	payload := map[string]interface{}{
+		"enabled": enabled,
+	}
+	if value, ok := args["simple_model"]; ok {
+		payload["simple_model"] = value
+	}
+	if value, ok := args["moderate_model"]; ok {
+		payload["moderate_model"] = value
+	}
+	if value, ok := args["complex_model"]; ok {
+		payload["complex_model"] = value
+	}
+	return s.client.call(ctx, "POST", "/v1/enzan/routing", payload)
+}
+
+func (s *Server) callEnzanRoutingSavings(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	path := "/v1/enzan/routing/savings"
+	if window, ok := args["window"].(string); ok && strings.TrimSpace(window) != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	return s.client.call(ctx, "GET", path, nil)
 }
 
 func (s *Server) callEnzanCreateAlert(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {

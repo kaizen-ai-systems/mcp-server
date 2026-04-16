@@ -71,6 +71,41 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.routing",
+			Description: "Get the current Enzan smart-routing config.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.set_routing",
+			Description: "Upsert the current Enzan smart-routing config.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"enabled":        map[string]interface{}{"type": "boolean"},
+					"simple_model":   map[string]interface{}{"type": "string"},
+					"moderate_model": map[string]interface{}{"type": "string"},
+					"complex_model":  map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"enabled"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.routing_savings",
+			Description: "Get realized Enzan smart-routing savings for a time window.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"window": map[string]interface{}{"type": "string", "enum": []string{"1h", "24h", "7d", "30d"}},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.pricing_models",
 			Description: "List configured LLM pricing entries.",
 			InputSchema: map[string]interface{}{
@@ -155,10 +190,10 @@ func toolDefinitions() []toolDefinition {
 					"threshold": map[string]interface{}{"type": "number"},
 					"window":    map[string]interface{}{"type": "string"},
 					"labels": map[string]interface{}{
-						"type": "object",
+						"type":                 "object",
 						"additionalProperties": map[string]interface{}{"type": "string"},
 					},
-					"enabled":   map[string]interface{}{"type": "boolean"},
+					"enabled": map[string]interface{}{"type": "boolean"},
 				},
 				"required":             []string{"name", "type"},
 				"additionalProperties": false,
@@ -175,10 +210,10 @@ func toolDefinitions() []toolDefinition {
 					"threshold": map[string]interface{}{"type": "number"},
 					"window":    map[string]interface{}{"type": "string"},
 					"labels": map[string]interface{}{
-						"type": "object",
+						"type":                 "object",
 						"additionalProperties": map[string]interface{}{"type": "string"},
 					},
-					"enabled":   map[string]interface{}{"type": "boolean"},
+					"enabled": map[string]interface{}{"type": "boolean"},
 				},
 				"required":             []string{"id"},
 				"additionalProperties": false,

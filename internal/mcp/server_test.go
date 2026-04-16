@@ -36,20 +36,23 @@ func TestToolDefinitionsIncludesEnzanCostsByModel(t *testing.T) {
 func TestToolDefinitionsIncludeEnzanPricingTools(t *testing.T) {
 	tools := toolDefinitions()
 	required := map[string]bool{
-		"enzan.pricing_models":         false,
-		"enzan.set_model_pricing":      false,
-		"enzan.pricing_gpus":           false,
-		"enzan.set_gpu_pricing":        false,
-		"enzan.alerts":                 false,
-		"enzan.create_alert":           false,
-		"enzan.update_alert":           false,
-		"enzan.delete_alert":           false,
-		"enzan.alert_events":           false,
-		"enzan.alert_deliveries":       false,
-		"enzan.alert_endpoints":        false,
-		"enzan.create_alert_endpoint":  false,
-		"enzan.update_alert_endpoint":  false,
-		"enzan.delete_alert_endpoint":  false,
+		"enzan.pricing_models":        false,
+		"enzan.set_model_pricing":     false,
+		"enzan.pricing_gpus":          false,
+		"enzan.set_gpu_pricing":       false,
+		"enzan.routing":               false,
+		"enzan.set_routing":           false,
+		"enzan.routing_savings":       false,
+		"enzan.alerts":                false,
+		"enzan.create_alert":          false,
+		"enzan.update_alert":          false,
+		"enzan.delete_alert":          false,
+		"enzan.alert_events":          false,
+		"enzan.alert_deliveries":      false,
+		"enzan.alert_endpoints":       false,
+		"enzan.create_alert_endpoint": false,
+		"enzan.update_alert_endpoint": false,
+		"enzan.delete_alert_endpoint": false,
 	}
 	for _, tool := range tools {
 		if _, ok := required[tool.Name]; ok {
