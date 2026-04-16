@@ -151,7 +151,7 @@ func toolDefinitions() []toolDefinition {
 				"properties": map[string]interface{}{
 					"id":        map[string]interface{}{"type": "string"},
 					"name":      map[string]interface{}{"type": "string"},
-					"type":      map[string]interface{}{"type": "string", "enum": []string{"cost_threshold", "budget_exceeded", "optimization_available", "pricing_change", "daily_summary"}},
+					"type":      map[string]interface{}{"type": "string", "enum": []string{"cost_threshold", "cost_anomaly", "budget_exceeded", "optimization_available", "pricing_change", "daily_summary"}},
 					"threshold": map[string]interface{}{"type": "number"},
 					"window":    map[string]interface{}{"type": "string"},
 					"labels": map[string]interface{}{
