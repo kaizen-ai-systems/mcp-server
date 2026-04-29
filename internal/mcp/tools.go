@@ -159,6 +159,90 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.pricing_refresh_trigger",
+			Description: "Trigger an on-demand live-pricing refresh sweep (admin enzan_pricing_admin required). Fire-and-forget; poll enzan.pricing_refresh_log for status.",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.pricing_refresh_log",
+			Description: "List recent live-pricing refresh-log entries (admin enzan_pricing_admin required). Default 50; server clamps to 1..200 and rejects non-positive values with 400. Limit is forwarded verbatim so the server remains the clamp/validation authority.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "integer"},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.pricing_providers",
+			Description: "List registered live-pricing sources with adapter availability hints (admin enzan_pricing_admin required).",
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"properties":           map[string]interface{}{},
+				"additionalProperties": false,
+			},
+		},
+		{
+			Name:        "enzan.pricing_offers_upsert",
+			Description: "Upsert one manual (admin-authored) live-pricing offer; exactly one of gpu or llm must be set (admin enzan_pricing_admin required).",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"gpu": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"provider":          map[string]interface{}{"type": "string"},
+							"gpuType":           map[string]interface{}{"type": "string"},
+							"displayName":       map[string]interface{}{"type": "string"},
+							"region":            map[string]interface{}{"type": "string"},
+							"deploymentClass":   map[string]interface{}{"type": "string", "enum": []string{"on_demand", "reserved", "spot", "committed_monthly"}},
+							"commitmentTerm":    map[string]interface{}{"type": "string"},
+							"clusterSizeMin":    map[string]interface{}{"type": "integer"},
+							"clusterSizeMax":    map[string]interface{}{"type": "integer"},
+							"interconnectClass": map[string]interface{}{"type": "string", "enum": []string{"standard", "high_speed", "infiniband", "nvlink", "unknown"}},
+							"trainingReady":     map[string]interface{}{"type": "boolean"},
+							"hourlyRateUSD":     map[string]interface{}{"type": "number", "minimum": 0},
+							"currency":          map[string]interface{}{"type": "string"},
+							"currencyFxNote":    map[string]interface{}{"type": "string"},
+							"sourceUrl":         map[string]interface{}{"type": "string"},
+						},
+						"required":             []string{"provider", "gpuType", "displayName", "hourlyRateUSD"},
+						"additionalProperties": false,
+					},
+					"llm": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"provider":                 map[string]interface{}{"type": "string"},
+							"model":                    map[string]interface{}{"type": "string"},
+							"displayName":              map[string]interface{}{"type": "string"},
+							"region":                   map[string]interface{}{"type": "string"},
+							"commitmentTerm":           map[string]interface{}{"type": "string"},
+							"inputCostPer1KTokensUSD":  map[string]interface{}{"type": "number", "minimum": 0},
+							"outputCostPer1KTokensUSD": map[string]interface{}{"type": "number", "minimum": 0},
+							"currency":                 map[string]interface{}{"type": "string"},
+							"currencyFxNote":           map[string]interface{}{"type": "string"},
+							"sourceUrl":                map[string]interface{}{"type": "string"},
+						},
+						"required":             []string{"provider", "model", "displayName", "inputCostPer1KTokensUSD", "outputCostPer1KTokensUSD"},
+						"additionalProperties": false,
+					},
+				},
+				// JSON-Schema-level "exactly one of gpu or llm" enforcement so
+				// generated clients reject invalid payloads at the contract
+				// layer rather than the runtime 400 path.
+				"oneOf": []map[string]interface{}{
+					{"required": []string{"gpu"}, "not": map[string]interface{}{"required": []string{"llm"}}},
+					{"required": []string{"llm"}, "not": map[string]interface{}{"required": []string{"gpu"}}},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.optimize",
 			Description: "Generate cost optimization recommendations for a time window.",
 			InputSchema: map[string]interface{}{

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -141,6 +142,16 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/gpus", nil)
 	case "enzan.set_gpu_pricing":
 		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
+	case "enzan.pricing_refresh_trigger":
+		// Preserve 429 {status:"dropped",triggeredBy:...} body so MCP
+		// callers can branch on the typed shape, matching the SDK contract.
+		data, err = s.callPreservingTypedBody(ctx, "POST", "/v1/enzan/pricing/refresh", nil, []int{http.StatusTooManyRequests})
+	case "enzan.pricing_refresh_log":
+		data, err = s.callEnzanPricingRefreshLog(ctx, params.Arguments)
+	case "enzan.pricing_providers":
+		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/providers", nil)
+	case "enzan.pricing_offers_upsert":
+		data, err = s.callEnzanPricingOffersUpsert(ctx, params.Arguments)
 	case "enzan.optimize":
 		data, err = s.callEnzanOptimize(ctx, params.Arguments)
 	case "enzan.alerts":
@@ -176,6 +187,21 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 	}
 
 	if err != nil {
+		// typedBodyError carries a meaningful response body alongside the
+		// failure status (e.g., 429 {status:"dropped",triggeredBy:...} or
+		// 409 {status:"stale"} on the live-pricing surface). Thread BOTH
+		// signals: isError=true so generic MCP clients see the failure,
+		// AND structuredContent with the typed body so callers that want
+		// to branch on the dropped/stale shape can read it directly.
+		var typedErr *typedBodyError
+		if errors.As(err, &typedErr) {
+			pretty, _ := json.MarshalIndent(typedErr.Body, "", "  ")
+			return map[string]interface{}{
+				"content":           []map[string]string{{"type": "text", "text": string(pretty)}},
+				"structuredContent": typedErr.Body,
+				"isError":           true,
+			}, nil
+		}
 		return map[string]interface{}{
 			"content": []map[string]string{{"type": "text", "text": err.Error()}},
 			"isError": true,
@@ -512,6 +538,113 @@ func (s *Server) callEnzanSetGPUPricing(ctx context.Context, args map[string]int
 		}
 	}
 	return s.client.call(ctx, "POST", "/v1/enzan/pricing/gpus", payload)
+}
+
+// callPreservingTypedBody runs an api call. For the listed status codes
+// (429 dropped / 409 stale on the 8.2-public surface), it returns the
+// typed response body wrapped in a *typedBodyError so handleToolCall can
+// surface BOTH (a) `isError: true` — generic MCP clients that branch
+// only on tool failure correctly see a dropped/stale outcome — AND
+// (b) the typed body in `structuredContent` for callers that want to
+// branch on the body shape. Matches the SDK contract that exposes the
+// same bodies via err.data.
+func (s *Server) callPreservingTypedBody(ctx context.Context, method, path string, payload interface{}, preserveStatuses []int) (map[string]interface{}, error) {
+	data, err := s.client.call(ctx, method, path, payload)
+	if err != nil {
+		var apiErr *apiCallError
+		if errors.As(err, &apiErr) {
+			for _, code := range preserveStatuses {
+				if apiErr.Status == code {
+					return nil, &typedBodyError{Status: apiErr.Status, Body: apiErr.Body, Msg: apiErr.Msg}
+				}
+			}
+		}
+	}
+	return data, err
+}
+
+// typedBodyError signals that the underlying API call failed (>=400) AND
+// the body should be surfaced to the MCP client as structuredContent
+// alongside `isError: true`. handleToolCall recognises this concrete
+// type and threads both signals into the tool result.
+type typedBodyError struct {
+	Status int
+	Body   map[string]interface{}
+	Msg    string
+}
+
+func (e *typedBodyError) Error() string { return e.Msg }
+
+func (s *Server) callEnzanPricingRefreshLog(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	path := "/v1/enzan/pricing/refresh/log"
+	// Forward `limit` verbatim (including 0 and negative) so the server's
+	// "limit must be a positive integer" 400 path stays observable from
+	// MCP. Matches the SDK contract — server is the clamp/validation
+	// authority, clients must not silently drop user-provided values.
+	if limit, ok := numericToolArg(args, "limit"); ok {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	return s.client.call(ctx, "GET", path, nil)
+}
+
+func (s *Server) callEnzanPricingOffersUpsert(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	// Resolve each branch into one of three states: absent (key missing or
+	// null), valid object, or present-but-malformed. Both "valid" and
+	// "present-but-malformed" count as "branch selected" for the
+	// exactly-one check — otherwise `{"gpu": valid, "llm": "oops"}` would
+	// silently slip through as a GPU-only call. Malformed branches still
+	// fail the request at the tool boundary, even when the other branch
+	// looks valid.
+	gpu, gpuState := classifyOfferBranch(args, "gpu")
+	llm, llmState := classifyOfferBranch(args, "llm")
+	gpuPresent := gpuState != offerBranchAbsent
+	llmPresent := llmState != offerBranchAbsent
+	if gpuPresent == llmPresent {
+		return nil, fmt.Errorf("exactly one of gpu or llm must be set")
+	}
+	if gpuPresent && gpuState == offerBranchMalformed {
+		return nil, fmt.Errorf("gpu must be an object")
+	}
+	if llmPresent && llmState == offerBranchMalformed {
+		return nil, fmt.Errorf("llm must be an object")
+	}
+	payload := map[string]interface{}{}
+	if gpuPresent {
+		payload["gpu"] = gpu
+	} else {
+		payload["llm"] = llm
+	}
+	// Preserve 409 {status:"stale"} body so MCP callers can branch on the
+	// typed stale shape, matching the SDK contract.
+	return s.callPreservingTypedBody(ctx, "POST", "/v1/enzan/pricing/offers", payload, []int{http.StatusConflict})
+}
+
+type offerBranchState int
+
+const (
+	offerBranchAbsent offerBranchState = iota
+	offerBranchValid
+	offerBranchMalformed
+)
+
+// classifyOfferBranch returns (object, state) for an offer branch under
+// `args[key]`. State:
+//   - absent: key missing or null
+//   - valid: key is a JSON object
+//   - malformed: key is present but not null and not an object (e.g.,
+//     a number or string). The exactly-one-of check counts both "valid"
+//     and "malformed" as "present" so a caller cannot smuggle a second
+//     branch as a non-object value.
+func classifyOfferBranch(args map[string]interface{}, key string) (map[string]interface{}, offerBranchState) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, offerBranchAbsent
+	}
+	asMap, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, offerBranchMalformed
+	}
+	return asMap, offerBranchValid
 }
 
 func (s *Server) callSozoGenerate(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {

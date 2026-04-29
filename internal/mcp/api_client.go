@@ -78,11 +78,28 @@ func (c *kaizenAPIClient) call(ctx context.Context, method, path string, payload
 		if v, ok := decoded["error"].(string); ok && v != "" {
 			msg = v
 		}
-		return nil, fmt.Errorf("%s (status=%d)", msg, resp.StatusCode)
+		return nil, &apiCallError{
+			Status: resp.StatusCode,
+			Body:   decoded,
+			Msg:    fmt.Sprintf("%s (status=%d)", msg, resp.StatusCode),
+		}
 	}
 
 	return decoded, nil
 }
+
+// apiCallError lets dispatchers recover the typed response body for
+// non-2xx statuses where the body carries protocol-level signal (notably
+// 429 {status:"dropped",triggeredBy:...} and 409 {status:"stale"} on the
+// 8.2-public live-pricing surface). Callers that need the body do
+// errors.As + check Status; callers that don't see only the err string.
+type apiCallError struct {
+	Status int
+	Body   map[string]interface{}
+	Msg    string
+}
+
+func (e *apiCallError) Error() string { return e.Msg }
 
 func getEnv(key, fallback string) string {
 	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
