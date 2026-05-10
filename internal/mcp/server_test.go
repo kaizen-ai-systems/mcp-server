@@ -25,6 +25,20 @@ func TestToolDefinitionsIncludesAkumaSchema(t *testing.T) {
 	}
 }
 
+func TestToolDefinitionsIncludesAkumaQueryInteractive(t *testing.T) {
+	tools := toolDefinitions()
+	found := false
+	for _, tool := range tools {
+		if tool.Name == "akuma.query_interactive" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected akuma.query_interactive tool in tools/list response")
+	}
+}
+
 func TestToolDefinitionsIncludesEnzanCostsByModel(t *testing.T) {
 	tools := toolDefinitions()
 	found := false
@@ -50,19 +64,19 @@ func TestToolDefinitionsIncludeEnzanPricingTools(t *testing.T) {
 		"enzan.pricing_refresh_log":     false,
 		"enzan.pricing_providers":       false,
 		"enzan.pricing_offers_upsert":   false,
-		"enzan.routing":               false,
-		"enzan.set_routing":           false,
-		"enzan.routing_savings":       false,
-		"enzan.alerts":                false,
-		"enzan.create_alert":          false,
-		"enzan.update_alert":          false,
-		"enzan.delete_alert":          false,
-		"enzan.alert_events":          false,
-		"enzan.alert_deliveries":      false,
-		"enzan.alert_endpoints":       false,
-		"enzan.create_alert_endpoint": false,
-		"enzan.update_alert_endpoint": false,
-		"enzan.delete_alert_endpoint": false,
+		"enzan.routing":                 false,
+		"enzan.set_routing":             false,
+		"enzan.routing_savings":         false,
+		"enzan.alerts":                  false,
+		"enzan.create_alert":            false,
+		"enzan.update_alert":            false,
+		"enzan.delete_alert":            false,
+		"enzan.alert_events":            false,
+		"enzan.alert_deliveries":        false,
+		"enzan.alert_endpoints":         false,
+		"enzan.create_alert_endpoint":   false,
+		"enzan.update_alert_endpoint":   false,
+		"enzan.delete_alert_endpoint":   false,
 	}
 	for _, tool := range tools {
 		if _, ok := required[tool.Name]; ok {
@@ -121,6 +135,418 @@ func TestHandleToolCallMissingPromptReturnsToolError(t *testing.T) {
 	}
 	if isError, ok := response["isError"].(bool); !ok || !isError {
 		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveDispatchesToInteractiveEndpoint(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/akuma/queries/interactive" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+			http.Error(w, "bad payload", http.StatusBadRequest)
+			return
+		}
+		if payload["sourceId"] != "src_123" {
+			t.Errorf("expected sourceId to round-trip, got %#v", payload["sourceId"])
+			http.Error(w, "bad source id", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"select 1"}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect":  "postgres",
+			"prompt":   "show one row",
+			"sourceId": "src_123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	content, ok := response["structuredContent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured content, got %#v", response["structuredContent"])
+	}
+	if content["status"] != "completed" {
+		t.Fatalf("unexpected status: %#v", content["status"])
+	}
+	resultContent, ok := content["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected nested result content, got %#v", content["result"])
+	}
+	if resultContent["sql"] != "select 1" {
+		t.Fatalf("unexpected sql: %#v", resultContent["sql"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectedEnvelope(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/akuma/queries/interactive" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"rejected","result":{"sql":"select * from users","error":"unsafe query"}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "unsafe query",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	content, ok := response["structuredContent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured content, got %#v", response["structuredContent"])
+	}
+	if content["status"] != "rejected" {
+		t.Fatalf("unexpected status: %#v", content["status"])
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected rejected envelope to set isError=true, got %#v", response["isError"])
+	}
+	textContent, ok := response["content"].([]map[string]string)
+	if !ok || len(textContent) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if !strings.HasPrefix(textContent[0]["text"], "interactive query rejected:\n") {
+		t.Fatalf("expected semantic error text, got %#v", textContent[0]["text"])
+	}
+	resultContent, ok := content["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected nested result content, got %#v", content["result"])
+	}
+	if resultContent["error"] != "unsafe query" {
+		t.Fatalf("unexpected error: %#v", resultContent["error"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectsRejectedEnvelopeWithoutError(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"rejected","result":{"sql":"select * from users"}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "unsafe query",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query rejected response missing error" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectsCompletedEnvelopeWithError(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"select *","error":"unsafe query"}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "unsafe query",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query completed response must not include error" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveMalformedEnvelopeReturnsToolError(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"completed"}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show one row",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query response missing result" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectsNullResult(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"needs_clarification","result":null}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show one row",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query response result must be an object" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveAllowsFutureStatusWithoutResult(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"needs_clarification"}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show one row",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	content, ok := response["structuredContent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured content, got %#v", response["structuredContent"])
+	}
+	if content["status"] != "needs_clarification" {
+		t.Fatalf("unexpected status: %#v", content["status"])
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected future non-completed envelope to set isError=true, got %#v", response["isError"])
+	}
+	textContent, ok := response["content"].([]map[string]string)
+	if !ok || len(textContent) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if !strings.HasPrefix(textContent[0]["text"], "interactive query needs_clarification:\n") {
+		t.Fatalf("expected semantic error text, got %#v", textContent[0]["text"])
+	}
+	if _, ok := content["result"]; ok {
+		t.Fatalf("future status without result should pass through without result, got %#v", content)
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveNonOKReturnsToolError(t *testing.T) {
+	for _, status := range []int{
+		http.StatusMethodNotAllowed,
+		http.StatusUnprocessableEntity,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"bad sql","sql":"select *","warnings":["blocked"]}`))
+			}))
+			defer api.Close()
+
+			s := &Server{client: &kaizenAPIClient{
+				baseURL:    api.URL,
+				apiKey:     "test",
+				httpClient: api.Client(),
+			}}
+			raw, err := json.Marshal(toolsCallParams{
+				Name: "akuma.query_interactive",
+				Arguments: map[string]interface{}{
+					"dialect": "postgres",
+					"prompt":  "show one row",
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+
+			result, rpcErr := s.handleToolCall(raw)
+			if rpcErr != nil {
+				t.Fatalf("expected no rpc error, got %+v", rpcErr)
+			}
+			response, ok := result.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected result map, got %T", result)
+			}
+			if isError, ok := response["isError"].(bool); !ok || !isError {
+				t.Fatalf("expected isError=true, got %#v", response["isError"])
+			}
+			structured, ok := response["structuredContent"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected structured error content, got %#v", response["structuredContent"])
+			}
+			if structured["sql"] != "select *" {
+				t.Fatalf("expected structured sql payload, got %#v", structured["sql"])
+			}
+			warnings, ok := structured["warnings"].([]interface{})
+			if !ok || len(warnings) != 1 || warnings[0] != "blocked" {
+				t.Fatalf("expected structured warnings, got %#v", structured["warnings"])
+			}
+			content, ok := response["content"].([]map[string]string)
+			if !ok || len(content) != 1 {
+				t.Fatalf("expected one text content item, got %#v", response["content"])
+			}
+			if !strings.Contains(content[0]["text"], `"sql": "select *"`) {
+				t.Fatalf("expected structured body in tool text, got %#v", content[0]["text"])
+			}
+		})
 	}
 }
 

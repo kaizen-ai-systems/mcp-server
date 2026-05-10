@@ -20,6 +20,23 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "akuma.query_interactive",
+			Description: "Translate natural language into SQL using the interactive Akuma protocol. Returns a status envelope; non-completed statuses such as rejected surface as MCP tool errors with the full envelope in structuredContent.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dialect":    map[string]interface{}{"type": "string", "enum": []string{"postgres", "mysql", "snowflake", "bigquery"}},
+					"prompt":     map[string]interface{}{"type": "string"},
+					"mode":       map[string]interface{}{"type": "string", "enum": []string{"sql-only", "sql-and-results", "explain"}},
+					"maxRows":    map[string]interface{}{"type": "number"},
+					"sourceId":   map[string]interface{}{"type": "string"},
+					"guardrails": map[string]interface{}{"type": "object"},
+				},
+				"required":             []string{"dialect", "prompt"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "akuma.explain",
 			Description: "Explain a SQL query in plain English.",
 			InputSchema: map[string]interface{}{

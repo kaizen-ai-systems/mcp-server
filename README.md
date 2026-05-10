@@ -9,6 +9,7 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 ## Available tools
 
 - `akuma.query`
+- `akuma.query_interactive`
 - `akuma.explain`
 - `akuma.schema`
 - `enzan.summary`
@@ -35,6 +36,10 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 - `enzan.burn`
 - `sozo.generate`
 - `sozo.schemas`
+
+`akuma.query_interactive` returns HTTP 200 interactive envelopes as structured tool content. Non-`completed` statuses such as `rejected` or future follow-up states are semantic tool errors (`isError: true`) with the full envelope still exposed as `structuredContent`; rejected envelopes must include a non-empty `result.error`, and completed envelopes must not carry `result.error`. Typed non-2xx Akuma bodies are also MCP tool errors with decoded `structuredContent` so clients can inspect fields such as `sql`, `warnings`, and `tables`.
+
+The legacy `akuma.query` tool remains supported for existing clients with its flat success response and text-only MCP error surface. Use `akuma.query_interactive` for new MCP integrations that need interactive statuses or typed non-2xx Akuma error bodies in `structuredContent`.
 
 ## Required environment variables
 

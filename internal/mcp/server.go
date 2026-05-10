@@ -120,6 +120,8 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 	switch params.Name {
 	case "akuma.query":
 		data, err = s.callAkumaQuery(ctx, params.Arguments)
+	case "akuma.query_interactive":
+		data, err = s.callAkumaQueryInteractive(ctx, params.Arguments)
 	case "akuma.explain":
 		data, err = s.callAkumaExplain(ctx, params.Arguments)
 	case "akuma.schema":
@@ -187,17 +189,16 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 	}
 
 	if err != nil {
-		// typedBodyError carries a meaningful response body alongside the
-		// failure status (e.g., 429 {status:"dropped",triggeredBy:...} or
-		// 409 {status:"stale"} on the live-pricing surface). Thread BOTH
+		// typedBodyError carries a meaningful response body alongside a
+		// transport failure status or semantic failure state. Thread BOTH
 		// signals: isError=true so generic MCP clients see the failure,
 		// AND structuredContent with the typed body so callers that want
-		// to branch on the dropped/stale shape can read it directly.
+		// to branch on the body shape can read it directly.
 		var typedErr *typedBodyError
 		if errors.As(err, &typedErr) {
 			pretty, _ := json.MarshalIndent(typedErr.Body, "", "  ")
 			return map[string]interface{}{
-				"content":           []map[string]string{{"type": "text", "text": string(pretty)}},
+				"content":           []map[string]string{{"type": "text", "text": fmt.Sprintf("%s:\n%s", typedErr.Error(), pretty)}},
 				"structuredContent": typedErr.Body,
 				"isError":           true,
 			}, nil
@@ -216,6 +217,46 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 }
 
 func (s *Server) callAkumaQuery(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	payload, err := buildAkumaQueryPayload(args)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.call(ctx, http.MethodPost, "/v1/akuma/query", payload)
+}
+
+func (s *Server) callAkumaQueryInteractive(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	payload, err := buildAkumaQueryPayload(args)
+	if err != nil {
+		return nil, err
+	}
+	// Interactive keeps its own call path because it preserves typed non-2xx
+	// bodies and converts HTTP 200 non-completed envelopes into MCP tool errors.
+	data, err := s.callPreservingTypedBody(ctx, http.MethodPost, "/v1/akuma/queries/interactive", payload, []int{
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusMethodNotAllowed,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusUnprocessableEntity,
+		http.StatusTooManyRequests,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+		http.StatusInternalServerError,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAkumaInteractiveResponse(data); err != nil {
+		return nil, err
+	}
+	if data["status"] != "completed" {
+		return nil, &typedBodyError{Status: http.StatusOK, Body: data, Msg: fmt.Sprintf("interactive query %s", data["status"])}
+	}
+	return data, nil
+}
+
+func buildAkumaQueryPayload(args map[string]interface{}) (map[string]interface{}, error) {
 	dialect, _ := args["dialect"].(string)
 	prompt, _ := args["prompt"].(string)
 	if strings.TrimSpace(dialect) == "" {
@@ -242,7 +283,41 @@ func (s *Server) callAkumaQuery(ctx context.Context, args map[string]interface{}
 		payload["guardrails"] = v
 	}
 
-	return s.client.call(ctx, "POST", "/v1/akuma/query", payload)
+	return payload, nil
+}
+
+func validateAkumaInteractiveResponse(data map[string]interface{}) error {
+	status, ok := data["status"].(string)
+	if !ok || strings.TrimSpace(status) == "" {
+		return fmt.Errorf("interactive query response missing status")
+	}
+
+	result, hasResult := data["result"]
+	var resultMap map[string]interface{}
+	if hasResult {
+		var ok bool
+		resultMap, ok = result.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("interactive query response result must be an object")
+		}
+	}
+	if (status == "completed" || status == "rejected") && !hasResult {
+		return fmt.Errorf("interactive query response missing result")
+	}
+	if status == "rejected" {
+		errorText, _ := resultMap["error"].(string)
+		if strings.TrimSpace(errorText) == "" {
+			return fmt.Errorf("interactive query rejected response missing error")
+		}
+	}
+	if status == "completed" {
+		errorText, _ := resultMap["error"].(string)
+		if strings.TrimSpace(errorText) != "" {
+			return fmt.Errorf("interactive query completed response must not include error")
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) callEnzanCreateAlertEndpoint(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
@@ -563,10 +638,10 @@ func (s *Server) callPreservingTypedBody(ctx context.Context, method, path strin
 	return data, err
 }
 
-// typedBodyError signals that the underlying API call failed (>=400) AND
-// the body should be surfaced to the MCP client as structuredContent
-// alongside `isError: true`. handleToolCall recognises this concrete
-// type and threads both signals into the tool result.
+// typedBodyError signals that the underlying API call failed or produced a
+// semantic failure envelope AND the body should be surfaced to the MCP client
+// as structuredContent alongside `isError: true`. handleToolCall recognises
+// this concrete type and threads both signals into the tool result.
 type typedBodyError struct {
 	Status int
 	Body   map[string]interface{}
