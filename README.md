@@ -2,10 +2,6 @@
 
 Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 
-This package is the MCP source of truth in the monorepo and is snapshot-published to the public repo via the manifest-driven public publish workflow:
-
-- <https://github.com/kaizen-ai-systems/mcp-server>
-
 ## Available tools
 
 - `akuma.query`
@@ -37,9 +33,13 @@ This package is the MCP source of truth in the monorepo and is snapshot-publishe
 - `sozo.generate`
 - `sozo.schemas`
 
-`akuma.query_interactive` returns HTTP 200 interactive envelopes as structured tool content. Non-`completed` statuses such as `rejected` or future follow-up states are semantic tool errors (`isError: true`) with the full envelope still exposed as `structuredContent`; rejected envelopes must include a non-empty `result.error`, and completed envelopes must not carry `result.error`. Typed non-2xx Akuma bodies are also MCP tool errors with decoded `structuredContent` so clients can inspect fields such as `sql`, `warnings`, and `tables`.
+`akuma.query_interactive` returns HTTP 200 interactive envelopes as structured tool content. The known statuses are `completed`, `needs_clarification`, and `rejected`; future statuses pass through as semantic tool errors with the full envelope mirrored into `structuredContent`. `rejected` envelopes must include a non-empty `result.error`, and `completed` envelopes must not carry `result.error`. Typed non-2xx Akuma bodies are also MCP tool errors with decoded `structuredContent` so clients can inspect fields such as `sql`, `warnings`, and `tables`.
 
-The legacy `akuma.query` tool remains supported for existing clients with its flat success response and text-only MCP error surface. Use `akuma.query_interactive` for new MCP integrations that need interactive statuses or typed non-2xx Akuma error bodies in `structuredContent`.
+`needs_clarification` envelopes carry a `clarification` object instead of `result`. Each clarification includes a server-issued `clarificationToken`, a short `question`, an `expiresAt` timestamp, and a list of `options` (each with `id`, `label`, and optional `description`). The MCP client surfaces these via `structuredContent` with `isError: true` so the host LLM can present the choices and obtain the user's selection.
+
+To consume a clarification, call `akuma.query_interactive` again with `clarificationToken`, `optionId`, and `idempotencyKey` arguments (no `dialect`/`prompt` needed; the token identifies the pending clarification). The MCP forwards `idempotencyKey` to the API as the `Idempotency-Key` header. Same token + same `optionId` + same `idempotencyKey` replays the persisted result; a different `idempotencyKey`, or a different `optionId` with the same key, is rejected (409). A change to the source schema after issuance is rejected with 409 and the user must restart the query flow. Unconsumed tokens expire at their `expiresAt` timestamp (410); after a consume, the result is retained for replay for 24 hours, after which replays return 404.
+
+The `akuma.query` tool remains supported for existing clients with its flat success response and text-only MCP error surface. Use `akuma.query_interactive` for new MCP integrations that need interactive statuses, the clarification flow, or typed non-2xx Akuma error bodies in `structuredContent`.
 
 ## Required environment variables
 
@@ -48,7 +48,7 @@ export KAIZEN_API_BASE_URL=https://api.kaizenaisystems.com
 export KAIZEN_API_KEY=your-platform-key
 ```
 
-## Run (monorepo)
+## Run (from source)
 
 ```bash
 cd cmd/mcp

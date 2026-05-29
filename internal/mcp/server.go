@@ -225,19 +225,57 @@ func (s *Server) callAkumaQuery(ctx context.Context, args map[string]interface{}
 }
 
 func (s *Server) callAkumaQueryInteractive(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
-	payload, err := buildAkumaQueryPayload(args)
-	if err != nil {
-		return nil, err
+	clarificationToken, _ := args["clarificationToken"].(string)
+	optionID, _ := args["optionId"].(string)
+	idempotencyKey, _ := args["idempotencyKey"].(string)
+	consume := strings.TrimSpace(clarificationToken) != ""
+
+	var (
+		payload map[string]interface{}
+		headers map[string]string
+		err     error
+	)
+	if consume {
+		// Consume request: dialect/prompt are not required (the persisted token
+		// owns those); validation here mirrors the API server's enforcement so
+		// MCP callers get a coherent error before the network round-trip.
+		if strings.TrimSpace(optionID) == "" {
+			return nil, fmt.Errorf("optionId is required when clarificationToken is set")
+		}
+		if strings.TrimSpace(idempotencyKey) == "" {
+			return nil, fmt.Errorf("idempotencyKey is required when clarificationToken is set")
+		}
+		payload = map[string]interface{}{
+			"clarificationToken": clarificationToken,
+			"optionId":           optionID,
+		}
+		headers = map[string]string{"Idempotency-Key": idempotencyKey}
+	} else {
+		// Fresh query path: idempotencyKey/optionId are not allowed without a
+		// token (server returns 400 too, but catching here gives a better
+		// error message and avoids a wasted call).
+		if strings.TrimSpace(optionID) != "" {
+			return nil, fmt.Errorf("optionId is only valid with a clarificationToken")
+		}
+		if strings.TrimSpace(idempotencyKey) != "" {
+			return nil, fmt.Errorf("idempotencyKey is only valid with a clarificationToken")
+		}
+		payload, err = buildAkumaQueryPayload(args)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	// Interactive keeps its own call path because it preserves typed non-2xx
 	// bodies and converts HTTP 200 non-completed envelopes into MCP tool errors.
-	data, err := s.callPreservingTypedBody(ctx, http.MethodPost, "/v1/akuma/queries/interactive", payload, []int{
+	data, err := s.callPreservingTypedBodyWithHeaders(ctx, http.MethodPost, "/v1/akuma/queries/interactive", payload, headers, []int{
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusForbidden,
 		http.StatusMethodNotAllowed,
 		http.StatusNotFound,
 		http.StatusConflict,
+		http.StatusGone,
 		http.StatusUnprocessableEntity,
 		http.StatusTooManyRequests,
 		http.StatusServiceUnavailable,
@@ -295,6 +333,12 @@ func validateAkumaInteractiveResponse(data map[string]interface{}) error {
 	result, hasResult := data["result"]
 	var resultMap map[string]interface{}
 	if hasResult {
+		// `result: null` is malformed for any status that uses result; allow
+		// `result` to be absent entirely (e.g. needs_clarification carries
+		// `clarification` instead) but never present-and-null.
+		if result == nil {
+			return fmt.Errorf("interactive query response result must be an object")
+		}
 		var ok bool
 		resultMap, ok = result.(map[string]interface{})
 		if !ok {
@@ -314,6 +358,43 @@ func validateAkumaInteractiveResponse(data map[string]interface{}) error {
 		errorText, _ := resultMap["error"].(string)
 		if strings.TrimSpace(errorText) != "" {
 			return fmt.Errorf("interactive query completed response must not include error")
+		}
+	}
+	if status == "needs_clarification" {
+		clarification, hasClarification := data["clarification"]
+		if !hasClarification {
+			return fmt.Errorf("interactive query needs_clarification response missing clarification")
+		}
+		clarificationMap, ok := clarification.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("interactive query needs_clarification response clarification must be an object")
+		}
+		token, _ := clarificationMap["clarificationToken"].(string)
+		if strings.TrimSpace(token) == "" {
+			return fmt.Errorf("interactive query needs_clarification response missing clarificationToken")
+		}
+		question, _ := clarificationMap["question"].(string)
+		if strings.TrimSpace(question) == "" {
+			return fmt.Errorf("interactive query needs_clarification response missing question")
+		}
+		options, ok := clarificationMap["options"].([]interface{})
+		if !ok || len(options) < 2 || len(options) > 4 {
+			return fmt.Errorf("interactive query needs_clarification response requires 2-4 options")
+		}
+		for _, opt := range options {
+			optMap, ok := opt.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("interactive query needs_clarification option must be an object")
+			}
+			id, _ := optMap["id"].(string)
+			label, _ := optMap["label"].(string)
+			if strings.TrimSpace(id) == "" || strings.TrimSpace(label) == "" {
+				return fmt.Errorf("interactive query needs_clarification option missing id or label")
+			}
+		}
+		expiresAt, _ := clarificationMap["expiresAt"].(string)
+		if strings.TrimSpace(expiresAt) == "" {
+			return fmt.Errorf("interactive query needs_clarification response missing expiresAt")
 		}
 	}
 
@@ -624,7 +705,14 @@ func (s *Server) callEnzanSetGPUPricing(ctx context.Context, args map[string]int
 // branch on the body shape. Matches the SDK contract that exposes the
 // same bodies via err.data.
 func (s *Server) callPreservingTypedBody(ctx context.Context, method, path string, payload interface{}, preserveStatuses []int) (map[string]interface{}, error) {
-	data, err := s.client.call(ctx, method, path, payload)
+	return s.callPreservingTypedBodyWithHeaders(ctx, method, path, payload, nil, preserveStatuses)
+}
+
+// callPreservingTypedBodyWithHeaders is identical to callPreservingTypedBody
+// but allows attaching custom headers (used by the clarification consume path
+// to forward Idempotency-Key).
+func (s *Server) callPreservingTypedBodyWithHeaders(ctx context.Context, method, path string, payload interface{}, headers map[string]string, preserveStatuses []int) (map[string]interface{}, error) {
+	data, err := s.client.callWithHeaders(ctx, method, path, payload, headers)
 	if err != nil {
 		var apiErr *apiCallError
 		if errors.As(err, &apiErr) {

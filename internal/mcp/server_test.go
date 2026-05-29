@@ -394,8 +394,11 @@ func TestHandleToolCallAkumaQueryInteractiveMalformedEnvelopeReturnsToolError(t 
 }
 
 func TestHandleToolCallAkumaQueryInteractiveRejectsNullResult(t *testing.T) {
+	// PR 1b: needs_clarification is now a real status with required
+	// `clarification` shape. Use a known-but-result-required status (rejected)
+	// to keep coverage of the "result: null is malformed" branch.
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"needs_clarification","result":null}`))
+		_, _ = w.Write([]byte(`{"status":"rejected","result":null}`))
 	}))
 	defer api.Close()
 
@@ -436,8 +439,12 @@ func TestHandleToolCallAkumaQueryInteractiveRejectsNullResult(t *testing.T) {
 }
 
 func TestHandleToolCallAkumaQueryInteractiveAllowsFutureStatusWithoutResult(t *testing.T) {
+	// Use a genuinely future, never-shipped status so this test covers the
+	// generic forward-compat passthrough branch (envelope mirrored into
+	// structuredContent + isError=true) without colliding with PR 1b's known
+	// statuses.
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"needs_clarification"}`))
+		_, _ = w.Write([]byte(`{"status":"deferred"}`))
 	}))
 	defer api.Close()
 
@@ -469,7 +476,7 @@ func TestHandleToolCallAkumaQueryInteractiveAllowsFutureStatusWithoutResult(t *t
 	if !ok {
 		t.Fatalf("expected structured content, got %#v", response["structuredContent"])
 	}
-	if content["status"] != "needs_clarification" {
+	if content["status"] != "deferred" {
 		t.Fatalf("unexpected status: %#v", content["status"])
 	}
 	if isError, ok := response["isError"].(bool); !ok || !isError {
@@ -479,11 +486,207 @@ func TestHandleToolCallAkumaQueryInteractiveAllowsFutureStatusWithoutResult(t *t
 	if !ok || len(textContent) != 1 {
 		t.Fatalf("expected one text content item, got %#v", response["content"])
 	}
-	if !strings.HasPrefix(textContent[0]["text"], "interactive query needs_clarification:\n") {
+	if !strings.HasPrefix(textContent[0]["text"], "interactive query deferred:\n") {
 		t.Fatalf("expected semantic error text, got %#v", textContent[0]["text"])
 	}
 	if _, ok := content["result"]; ok {
 		t.Fatalf("future status without result should pass through without result, got %#v", content)
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveNeedsClarification(t *testing.T) {
+	// PR 1b: validate the new known status flows through structuredContent
+	// (so the LLM frontend can present options) and surfaces as a tool error.
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"status":"needs_clarification",
+			"clarification":{
+				"clarificationToken":"tok-123",
+				"question":"Which time window?",
+				"options":[
+					{"id":"7d","label":"Last 7 days"},
+					{"id":"30d","label":"Last 30 days"}
+				],
+				"expiresAt":"2030-01-01T00:00:00Z"
+			}
+		}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show me usage",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true (caller must act), got %#v", response["isError"])
+	}
+	content, ok := response["structuredContent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured content, got %#v", response["structuredContent"])
+	}
+	if content["status"] != "needs_clarification" {
+		t.Fatalf("unexpected status: %#v", content["status"])
+	}
+	clarification, ok := content["clarification"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected clarification object in structured content, got %#v", content["clarification"])
+	}
+	if token, _ := clarification["clarificationToken"].(string); token != "tok-123" {
+		t.Fatalf("expected token in clarification, got %#v", clarification["clarificationToken"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveConsumeRequiresIdempotencyKey(t *testing.T) {
+	// Catch the missing Idempotency-Key argument before the network round-trip.
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    "http://nonexistent.invalid",
+		apiKey:     "test",
+		httpClient: http.DefaultClient,
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"clarificationToken": "tok-123",
+			"optionId":           "7d",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response := result.(map[string]interface{})
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	textContent, ok := response["content"].([]map[string]string)
+	if !ok || len(textContent) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if !strings.Contains(textContent[0]["text"], "idempotencyKey is required") {
+		t.Fatalf("expected idempotencyKey error text, got %#v", textContent[0]["text"])
+	}
+}
+
+// Regression: human review #3 M1 — the consume/fresh argument-shape
+// validation branches in callAkumaQueryInteractive must stay covered so they
+// don't regress silently. Each case asserts the error fires before any
+// network round-trip (baseURL points at an unreachable host).
+func TestHandleToolCallAkumaQueryInteractiveArgumentShapeValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    map[string]interface{}
+		wantSub string
+	}{
+		{
+			name:    "consume missing optionId",
+			args:    map[string]interface{}{"clarificationToken": "tok-123", "idempotencyKey": "k"},
+			wantSub: "optionId is required when clarificationToken is set",
+		},
+		{
+			name:    "fresh with optionId rejected",
+			args:    map[string]interface{}{"dialect": "postgres", "prompt": "show users", "optionId": "7d"},
+			wantSub: "optionId is only valid with a clarificationToken",
+		},
+		{
+			name:    "fresh with idempotencyKey rejected",
+			args:    map[string]interface{}{"dialect": "postgres", "prompt": "show users", "idempotencyKey": "k"},
+			wantSub: "idempotencyKey is only valid with a clarificationToken",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{client: &kaizenAPIClient{
+				baseURL:    "http://nonexistent.invalid",
+				apiKey:     "test",
+				httpClient: http.DefaultClient,
+			}}
+			raw, err := json.Marshal(toolsCallParams{Name: "akuma.query_interactive", Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+			result, rpcErr := s.handleToolCall(raw)
+			if rpcErr != nil {
+				t.Fatalf("expected no rpc error, got %+v", rpcErr)
+			}
+			response := result.(map[string]interface{})
+			if isError, ok := response["isError"].(bool); !ok || !isError {
+				t.Fatalf("expected isError=true, got %#v", response["isError"])
+			}
+			textContent, ok := response["content"].([]map[string]string)
+			if !ok || len(textContent) != 1 {
+				t.Fatalf("expected one text content item, got %#v", response["content"])
+			}
+			if !strings.Contains(textContent[0]["text"], tc.wantSub) {
+				t.Fatalf("expected %q in error text, got %#v", tc.wantSub, textContent[0]["text"])
+			}
+		})
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveConsumeForwardsHeader(t *testing.T) {
+	var (
+		gotHeader string
+		gotPath   string
+	)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Idempotency-Key")
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"SELECT 1 LIMIT 1000"}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"clarificationToken": "tok-123",
+			"optionId":           "7d",
+			"idempotencyKey":     "consume-key-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response := result.(map[string]interface{})
+	if isError, _ := response["isError"].(bool); isError {
+		t.Fatalf("expected isError=false, got %#v", response)
+	}
+	if gotPath != "/v1/akuma/queries/interactive" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotHeader != "consume-key-1" {
+		t.Fatalf("expected Idempotency-Key header to be forwarded, got %q", gotHeader)
 	}
 }
 

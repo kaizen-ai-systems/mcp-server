@@ -21,18 +21,31 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "akuma.query_interactive",
-			Description: "Translate natural language into SQL using the interactive Akuma protocol. Returns a status envelope; non-completed statuses such as rejected surface as MCP tool errors with the full envelope in structuredContent.",
+			Description: "Translate natural language into SQL using the interactive Akuma protocol. Two call shapes share this tool: (1) Fresh query — supply `dialect` and `prompt` (required); optional `mode`, `maxRows`, `sourceId`, `guardrails`. (2) Clarification consume — supply `clarificationToken`, `optionId`, and `idempotencyKey` (all required) on a follow-up call after the server returned a `needs_clarification` envelope. Returns a status envelope (completed | needs_clarification | rejected). needs_clarification responses include a clarificationToken and a discrete option list. Non-completed statuses surface as MCP tool errors with the full envelope in structuredContent.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"dialect":    map[string]interface{}{"type": "string", "enum": []string{"postgres", "mysql", "snowflake", "bigquery"}},
-					"prompt":     map[string]interface{}{"type": "string"},
-					"mode":       map[string]interface{}{"type": "string", "enum": []string{"sql-only", "sql-and-results", "explain"}},
-					"maxRows":    map[string]interface{}{"type": "number"},
-					"sourceId":   map[string]interface{}{"type": "string"},
-					"guardrails": map[string]interface{}{"type": "object"},
+					"dialect":            map[string]interface{}{"type": "string", "enum": []string{"postgres", "mysql", "snowflake", "bigquery"}},
+					"prompt":             map[string]interface{}{"type": "string"},
+					"mode":               map[string]interface{}{"type": "string", "enum": []string{"sql-only", "sql-and-results", "explain"}},
+					"maxRows":            map[string]interface{}{"type": "number"},
+					"sourceId":           map[string]interface{}{"type": "string"},
+					"guardrails":         map[string]interface{}{"type": "object"},
+					"clarificationToken": map[string]interface{}{"type": "string", "description": "Server-issued token from a prior needs_clarification response; required for consume."},
+					"optionId":           map[string]interface{}{"type": "string", "description": "Selected option id from the prior clarification.options list; required for consume."},
+					"idempotencyKey":     map[string]interface{}{"type": "string", "description": "Required on consume. Same token + same key replays the persisted result; same token + different key is rejected (409)."},
 				},
-				"required":             []string{"dialect", "prompt"},
+				// Top-level `required` is intentionally omitted because the tool
+				// serves two mutually-exclusive call shapes. anyOf expresses
+				// them structurally so a host LLM understands which fields go
+				// together before calling, instead of inferring it from the
+				// description alone (human review #3 M2). The handler still
+				// enforces the per-mode shape as the authority; clients that
+				// don't honor anyOf fall back to that handler validation.
+				"anyOf": []map[string]interface{}{
+					{"required": []string{"dialect", "prompt"}},
+					{"required": []string{"clarificationToken", "optionId", "idempotencyKey"}},
+				},
 				"additionalProperties": false,
 			},
 		},

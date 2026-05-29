@@ -30,6 +30,14 @@ func newKaizenAPIClient() *kaizenAPIClient {
 }
 
 func (c *kaizenAPIClient) call(ctx context.Context, method, path string, payload interface{}) (map[string]interface{}, error) {
+	return c.callWithHeaders(ctx, method, path, payload, nil)
+}
+
+// callWithHeaders is identical to call but lets callers attach extra request
+// headers (e.g., Idempotency-Key on the clarification consume path). Header
+// keys are added verbatim; trimmed empty values are skipped so callers can
+// pass unconditional maps.
+func (c *kaizenAPIClient) callWithHeaders(ctx context.Context, method, path string, payload interface{}, headers map[string]string) (map[string]interface{}, error) {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return nil, fmt.Errorf("KAIZEN_API_KEY is not set")
 	}
@@ -51,6 +59,12 @@ func (c *kaizenAPIClient) call(ctx context.Context, method, path string, payload
 	req.Header.Set("User-Agent", fmt.Sprintf("%s/%s", serverName, serverVersion))
 	if payload != nil && method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.httpClient.Do(req)
