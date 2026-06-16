@@ -393,6 +393,141 @@ func TestHandleToolCallAkumaQueryInteractiveMalformedEnvelopeReturnsToolError(t 
 	}
 }
 
+// PR 1c: a completed envelope with a provenance object passes validation and
+// the provenance is mirrored into structuredContent; a non-object provenance on
+// a completed envelope is a tool error.
+func TestHandleToolCallAkumaQueryInteractiveProvenance(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"SELECT u.name FROM users u"},"provenance":{"provenanceFidelity":"full","dialect":"postgres","tables":["users"],"joins":[],"filters":[],"projections":[{"expression":"u.name"}],"aggregations":{"groupBy":[],"functions":[]},"warnings":[]}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "active users",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, _ := response["isError"].(bool); isError {
+		t.Fatalf("completed envelope with provenance must not be a tool error: %#v", response)
+	}
+	structured, ok := response["structuredContent"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structuredContent map, got %#v", response["structuredContent"])
+	}
+	provenance, ok := structured["provenance"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected provenance mirrored into structuredContent, got %#v", structured["provenance"])
+	}
+	if provenance["provenanceFidelity"] != "full" {
+		t.Fatalf("unexpected fidelity: %#v", provenance["provenanceFidelity"])
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectsNonObjectProvenance(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"select 1"},"provenance":"not-an-object"}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show one row",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query response provenance must be an object" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
+// Codex round-1 F3: an empty provenance object on a completed envelope is a
+// tool error — provenanceFidelity is the load-bearing field.
+func TestHandleToolCallAkumaQueryInteractiveRejectsProvenanceWithoutFidelity(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"completed","result":{"sql":"select 1"},"provenance":{}}`))
+	}))
+	defer api.Close()
+
+	s := &Server{client: &kaizenAPIClient{
+		baseURL:    api.URL,
+		apiKey:     "test",
+		httpClient: api.Client(),
+	}}
+	raw, err := json.Marshal(toolsCallParams{
+		Name: "akuma.query_interactive",
+		Arguments: map[string]interface{}{
+			"dialect": "postgres",
+			"prompt":  "show one row",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	result, rpcErr := s.handleToolCall(raw)
+	if rpcErr != nil {
+		t.Fatalf("expected no rpc error, got %+v", rpcErr)
+	}
+	response, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result map, got %T", result)
+	}
+	if isError, ok := response["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", response["isError"])
+	}
+	content, ok := response["content"].([]map[string]string)
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one text content item, got %#v", response["content"])
+	}
+	if content[0]["text"] != "interactive query response provenance missing provenanceFidelity" {
+		t.Fatalf("unexpected tool error: %#v", content[0]["text"])
+	}
+}
+
 func TestHandleToolCallAkumaQueryInteractiveRejectsNullResult(t *testing.T) {
 	// PR 1b: needs_clarification is now a real status with required
 	// `clarification` shape. Use a known-but-result-required status (rejected)

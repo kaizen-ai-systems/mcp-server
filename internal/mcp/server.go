@@ -359,6 +359,30 @@ func validateAkumaInteractiveResponse(data map[string]interface{}) error {
 		if strings.TrimSpace(errorText) != "" {
 			return fmt.Errorf("interactive query completed response must not include error")
 		}
+		// PR 1c: provenance is defined only for completed results; require the
+		// object shape only there (same forward-compat scoping as the SDKs —
+		// a future status may reshape the field, and it passes through to the
+		// structured content either way).
+		if provenance, hasProvenance := data["provenance"]; hasProvenance && provenance != nil {
+			provenanceMap, ok := provenance.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("interactive query response provenance must be an object")
+			}
+			// provenanceFidelity is the load-bearing field — without it a host
+			// cannot tell full from limited provenance. Distinguish missing
+			// from mistyped so the error points at the actual defect.
+			fidelityRaw, hasFidelity := provenanceMap["provenanceFidelity"]
+			if !hasFidelity {
+				return fmt.Errorf("interactive query response provenance missing provenanceFidelity")
+			}
+			fidelity, isString := fidelityRaw.(string)
+			if !isString {
+				return fmt.Errorf("interactive query response provenance provenanceFidelity must be a string")
+			}
+			if strings.TrimSpace(fidelity) == "" {
+				return fmt.Errorf("interactive query response provenance missing provenanceFidelity")
+			}
+		}
 	}
 	if status == "needs_clarification" {
 		clarification, hasClarification := data["clarification"]
