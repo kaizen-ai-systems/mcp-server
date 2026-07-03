@@ -210,7 +210,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "enzan.pricing_providers",
-			Description: "List registered live-pricing sources with adapter availability hints (admin enzan_pricing_admin required).",
+			Description: "List registered live-pricing sources with automated refresh readiness fields such as envAllowed, effectiveEnabled, manualOfferWriteEnabled, disabledReason, credentialSource, and hasLegacyDbSecret (admin enzan_pricing_admin required). For manual, readiness describes refresh participation; manualOfferWriteEnabled reports offer-write access.",
 			InputSchema: map[string]interface{}{
 				"type":                 "object",
 				"properties":           map[string]interface{}{},
