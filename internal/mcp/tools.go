@@ -172,6 +172,26 @@ func toolDefinitions() []toolDefinition {
 			},
 		},
 		{
+			Name:        "enzan.pricing_search",
+			Description: "Search and deterministically rank active live GPU pricing offers. Rates and cluster sizes are per buyable instance; a terminal -<count>x GPU type suffix is GPUs per instance.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"gpuTypes":        map[string]interface{}{"type": "array", "description": "GPU model families or exact offer types; terminal -<count>x means GPUs per instance.", "items": map[string]interface{}{"type": "string"}},
+					"providers":       map[string]interface{}{"type": "array", "description": "Exact provider inclusion filters; omitted or empty means all providers.", "items": map[string]interface{}{"type": "string"}},
+					"minClusterSize":  map[string]interface{}{"type": "integer", "minimum": 0, "description": "Minimum buyable instance count, not GPU count."},
+					"trainingReady":   map[string]interface{}{"type": "boolean"},
+					"regions":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"commitmentTypes": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"maxHourlyRate":   map[string]interface{}{"type": "number", "minimum": 0, "description": "Maximum hourly USD rate per buyable instance."},
+					"anchorRateUSD":   map[string]interface{}{"type": "number", "minimum": 0, "description": "Comparison hourly USD rate per buyable instance."},
+					"rankingMode":     map[string]interface{}{"type": "string", "description": "Deterministic policy. cheapest_under_anchor requires anchorRateUSD; best_training_fit returns only training-ready offers.", "enum": []string{"cheapest", "cheapest_under_anchor", "best_training_fit", "best_alternative"}},
+					"limit":           map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "enzan.set_gpu_pricing",
 			Description: "Upsert one GPU pricing entry (admin API key required).",
 			InputSchema: map[string]interface{}{
@@ -227,7 +247,7 @@ func toolDefinitions() []toolDefinition {
 						"type": "object",
 						"properties": map[string]interface{}{
 							"provider":          map[string]interface{}{"type": "string"},
-							"gpuType":           map[string]interface{}{"type": "string"},
+							"gpuType":           map[string]interface{}{"type": "string", "description": "Source-authored GPU identity. A terminal -<count>x is the sole multi-GPU-per-instance encoding; unsuffixed or malformed values mean one GPU per instance."},
 							"displayName":       map[string]interface{}{"type": "string"},
 							"region":            map[string]interface{}{"type": "string"},
 							"deploymentClass":   map[string]interface{}{"type": "string", "enum": []string{"on_demand", "reserved", "spot", "committed_monthly"}},

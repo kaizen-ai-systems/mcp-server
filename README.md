@@ -28,7 +28,12 @@ Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 - `enzan.pricing_models`
 - `enzan.set_model_pricing`
 - `enzan.pricing_gpus`
+- `enzan.pricing_search`
 - `enzan.set_gpu_pricing`
+- `enzan.pricing_refresh_trigger`
+- `enzan.pricing_refresh_log`
+- `enzan.pricing_providers`
+- `enzan.pricing_offers_upsert`
 - `enzan.burn`
 - `sozo.generate`
 - `sozo.schemas`

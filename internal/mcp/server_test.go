@@ -59,6 +59,7 @@ func TestToolDefinitionsIncludeEnzanPricingTools(t *testing.T) {
 		"enzan.pricing_models":          false,
 		"enzan.set_model_pricing":       false,
 		"enzan.pricing_gpus":            false,
+		"enzan.pricing_search":          false,
 		"enzan.set_gpu_pricing":         false,
 		"enzan.pricing_refresh_trigger": false,
 		"enzan.pricing_refresh_log":     false,
@@ -81,6 +82,14 @@ func TestToolDefinitionsIncludeEnzanPricingTools(t *testing.T) {
 	for _, tool := range tools {
 		if _, ok := required[tool.Name]; ok {
 			required[tool.Name] = true
+		}
+		if tool.Name == "enzan.pricing_search" {
+			// Frozen wire policy: docs/plans/enzan-phase-8-live-pricing.md:1260-1266.
+			properties := tool.InputSchema["properties"].(map[string]interface{})
+			limit := properties["limit"].(map[string]interface{})
+			if limit["default"] != 20 {
+				t.Fatalf("pricing search limit default = %v, want 20", limit["default"])
+			}
 		}
 	}
 	for name, found := range required {
@@ -1126,6 +1135,33 @@ func TestHandleToolCallEnzanPricingOffersUpsertLLMBranchHitsServer(t *testing.T)
 	}
 	if !strings.Contains(captured[0].Body, `"llm"`) || strings.Contains(captured[0].Body, `"gpu"`) {
 		t.Fatalf("expected LLM-only request body, got %s", captured[0].Body)
+	}
+}
+
+func TestHandleToolCallEnzanPricingSearchHitsServer(t *testing.T) {
+	var captured []capturedRequest
+	srv, cleanup := newPricingTestServer(t, &captured, map[string]string{
+		"POST /v1/enzan/pricing/search": `{"filter":{"gpuTypes":["h100"]},"results":[],"freshness":"unknown","sourceMix":{}}`,
+	})
+	defer cleanup()
+
+	raw, _ := json.Marshal(toolsCallParams{
+		Name: "enzan.pricing_search",
+		Arguments: map[string]interface{}{
+			"gpuTypes":    []interface{}{"h100"},
+			"providers":   []interface{}{"runpod"},
+			"rankingMode": "best_training_fit",
+			"limit":       5,
+		},
+	})
+	if _, rpcErr := srv.handleToolCall(raw); rpcErr != nil {
+		t.Fatalf("rpc error: %+v", rpcErr)
+	}
+	if len(captured) != 1 || captured[0].Method != http.MethodPost || captured[0].Path != "/v1/enzan/pricing/search" {
+		t.Fatalf("captured requests = %+v", captured)
+	}
+	if !strings.Contains(captured[0].Body, `"gpuTypes":["h100"]`) || !strings.Contains(captured[0].Body, `"providers":["runpod"]`) || !strings.Contains(captured[0].Body, `"limit":5`) {
+		t.Fatalf("search request body = %s", captured[0].Body)
 	}
 }
 

@@ -142,6 +142,8 @@ func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError
 		data, err = s.callEnzanSetModelPricing(ctx, params.Arguments)
 	case "enzan.pricing_gpus":
 		data, err = s.client.call(ctx, "GET", "/v1/enzan/pricing/gpus", nil)
+	case "enzan.pricing_search":
+		data, err = s.client.call(ctx, "POST", "/v1/enzan/pricing/search", params.Arguments)
 	case "enzan.set_gpu_pricing":
 		data, err = s.callEnzanSetGPUPricing(ctx, params.Arguments)
 	case "enzan.pricing_refresh_trigger":
