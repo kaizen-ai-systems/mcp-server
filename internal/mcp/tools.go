@@ -1,5 +1,6 @@
 package mcp
 
+// Build identity is available through HTTP GET /health only.
 func toolDefinitions() []toolDefinition {
 	return []toolDefinition{
 		{
