@@ -80,7 +80,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "enzan.summary",
-			Description: "Summarize GPU spend and usage for a time window.",
+			Description: "Summarize GPU spend and usage for a time window, scoped to the authenticated user for database-backed API keys or the key itself for in-memory API keys. GPU rows are currently empty and GPU totals are zero because fleet GPU usage ingestion is unavailable.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -453,7 +453,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "enzan.burn",
-			Description: "Get current burn rate in USD/hour.",
+			Description: "Get current GPU fleet burn rate in USD/hour, scoped to the authenticated user for database-backed API keys or the key itself for in-memory API keys.",
 			InputSchema: map[string]interface{}{
 				"type":                 "object",
 				"properties":           map[string]interface{}{},

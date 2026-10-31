@@ -38,6 +38,8 @@ Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 - `sozo.generate`
 - `sozo.schemas`
 
+`enzan.summary` and `enzan.burn` scope GPU fleet data to the authenticated user for database-backed API keys, or the key itself for in-memory API keys. Holders of the same in-memory key, including the demo key, share a fleet. Fleet GPU usage ingestion is currently unavailable, so GPU summary rows are empty and GPU totals are zero; database-backed API cost reporting is unchanged.
+
 `akuma.query_interactive` returns HTTP 200 interactive envelopes as structured tool content. The known statuses are `completed`, `needs_clarification`, and `rejected`; future statuses pass through as semantic tool errors with the full envelope mirrored into `structuredContent`. `rejected` envelopes must include a non-empty `result.error`, and `completed` envelopes must not carry `result.error`. Typed non-2xx Akuma bodies are also MCP tool errors with decoded `structuredContent` so clients can inspect fields such as `sql`, `warnings`, and `tables`.
 
 `completed` envelopes that carry executed SQL also include a `provenance` object: structured, server-derived facts about how the answer was produced — `provenanceFidelity` (`full` when parser-backed extraction succeeded for `postgres`/`mysql`, else `limited`), plus `tables`, `joins`, `filters`, `projections`, `aggregations`, and enumerated `warnings` (categories such as `parser_extraction_failed`). Hosts must not present `limited` provenance as equivalent to `full`.
