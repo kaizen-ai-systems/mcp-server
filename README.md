@@ -42,6 +42,32 @@ Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 
 `akuma.query_interactive` returns HTTP 200 interactive envelopes as structured tool content. The known statuses are `completed`, `needs_clarification`, and `rejected`; future statuses pass through as semantic tool errors with the full envelope mirrored into `structuredContent`. `rejected` envelopes must include a non-empty `result.error`, and `completed` envelopes must not carry `result.error`. Typed non-2xx Akuma bodies are also MCP tool errors with decoded `structuredContent` so clients can inspect fields such as `sql`, `warnings`, and `tables`.
 
+Both query tools accept `guardrails.allowTables` in every mode. A nonempty list
+requires every physical name in generated SQL to match an entry, including comma
+joins, subqueries and CTE bodies. Empty or omitted disables this check. API
+extraction supports the `postgres`/`mysql` SELECT subset only; other dialects,
+invalid/unclassified SQL, multiple statements, SQL over 128 KiB, Postgres locking
+clauses, and MySQL backslashes or version comments (`/*!`) are rejected with the
+existing SQL-validation HTTP 400 error. Ordinary CTE aliases are excluded;
+forward references to later recursive CTE siblings are conservatively treated
+as physical references and may be rejected.
+
+MySQL allowlist extraction conservatively rejects any backtick-quoted identifier
+named `dual` (case-insensitive), including columns, aliases, CTE names and
+qualified names. Implicit `SELECT 1` and unquoted dummy `FROM DUAL` remain
+supported; qualified unquoted `app.dual` is a physical reference. String literals
+and ordinary comments containing that spelling do not independently trigger this
+refusal.
+
+Entries are not trimmed and must match canonical spelling and qualification:
+`allowed` differs from `public.allowed`. Postgres entries without double quotes
+are lowercased; any entry containing double quotes is entirely byte-exact
+(`"MixedCase"`, `public."Order"`). MySQL entries are case-sensitive: use
+``App.`Order` `` for SQL `` `App`.`Order` ``. Redundant quoting does not match:
+`"orders"` and MySQL `` `orders` `` entries differ from canonical `orders`.
+This checks statement names, not privileges, tables behind views/functions, or
+runtime search-path resolution. See the [API documentation](https://www.kaizenaisystems.com/docs) for the full spelling policy.
+
 `completed` envelopes that carry executed SQL also include a `provenance` object: structured, server-derived facts about how the answer was produced — `provenanceFidelity` (`full` when parser-backed extraction succeeded for `postgres`/`mysql`, else `limited`), plus `tables`, `joins`, `filters`, `projections`, `aggregations`, and enumerated `warnings` (categories such as `parser_extraction_failed`). Hosts must not present `limited` provenance as equivalent to `full`.
 
 `needs_clarification` envelopes carry a `clarification` object instead of `result`. Each clarification includes a server-issued `clarificationToken`, a short `question`, an `expiresAt` timestamp, and a list of `options` (each with `id`, `label`, and optional `description`). This is a normal follow-up result without `isError`: the full envelope appears in both text and `structuredContent` so the host LLM can present the choices and obtain the user's selection.
