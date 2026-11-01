@@ -462,7 +462,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "sozo.generate",
-			Description: "Generate synthetic tabular data from a schema or named preset.",
+			Description: "Generate synthetic tabular data from a schema or named preset. Rejects negative string lengths, invalid integer or datetime windows, and mismatched choice weight counts as invalid requests. Integer ranges must contain fewer than 2^63 values.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
