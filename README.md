@@ -44,11 +44,13 @@ Model Context Protocol (MCP) server for Kaizen APIs over stdio.
 
 `completed` envelopes that carry executed SQL also include a `provenance` object: structured, server-derived facts about how the answer was produced — `provenanceFidelity` (`full` when parser-backed extraction succeeded for `postgres`/`mysql`, else `limited`), plus `tables`, `joins`, `filters`, `projections`, `aggregations`, and enumerated `warnings` (categories such as `parser_extraction_failed`). Hosts must not present `limited` provenance as equivalent to `full`.
 
-`needs_clarification` envelopes carry a `clarification` object instead of `result`. Each clarification includes a server-issued `clarificationToken`, a short `question`, an `expiresAt` timestamp, and a list of `options` (each with `id`, `label`, and optional `description`). The MCP client surfaces these via `structuredContent` with `isError: true` so the host LLM can present the choices and obtain the user's selection.
+`needs_clarification` envelopes carry a `clarification` object instead of `result`. Each clarification includes a server-issued `clarificationToken`, a short `question`, an `expiresAt` timestamp, and a list of `options` (each with `id`, `label`, and optional `description`). This is a normal follow-up result without `isError`: the full envelope appears in both text and `structuredContent` so the host LLM can present the choices and obtain the user's selection.
 
 To consume a clarification, call `akuma.query_interactive` again with `clarificationToken`, `optionId`, and `idempotencyKey` arguments (no `dialect`/`prompt` needed; the token identifies the pending clarification). The MCP forwards `idempotencyKey` to the API as the `Idempotency-Key` header. Same token + same `optionId` + same `idempotencyKey` replays the persisted result; a different `idempotencyKey`, or a different `optionId` with the same key, is rejected (409). A change to the source schema after issuance is rejected with 409 and the user must restart the query flow. Unconsumed tokens expire at their `expiresAt` timestamp (410); after a consume, the result is retained for replay for 24 hours, after which replays return 404.
 
 The `akuma.query` tool remains supported for existing clients with its flat success response and text-only MCP error surface. Use `akuma.query_interactive` for new MCP integrations that need interactive statuses, the clarification flow, or typed non-2xx Akuma error bodies in `structuredContent`.
+
+Non-JSON HTTP error bodies report the HTTP status without including the raw body. Where a tool preserves typed error bodies, a non-JSON or null body becomes an empty `structuredContent` object.
 
 ## Required environment variables
 
@@ -118,5 +120,8 @@ go test ./...
 ## Protocol details
 
 - Transport: stdio
-- Framing: `Content-Length` JSON-RPC messages (line-delimited JSON accepted for smoke tests)
-- Protocol version: `2024-11-05`
+- Framing: newline-delimited UTF-8 JSON-RPC messages; each response ends with LF.
+- Input limit: 1 MiB (1,048,576 bytes) per message, excluding LF or CRLF. Blank lines are skipped. A final non-blank line at EOF is accepted without a terminator; a lone CR at EOF counts toward the limit.
+- Oversized input receives one invalid-request error (`-32600`, `id: null`), then the session terminates without draining the line or processing later messages. The limit applies only to input.
+- IDs: strings or exact integer numeric values, including decimal/exponent spellings such as `1.0` and `1e3`; IDs are echoed without numeric rounding. Numeric exponent magnitude must not exceed 1,048,576, checked before allocating the numeric value. Extreme values outside the standard numeric parser's supported range are also rejected.
+- Protocol version: `2025-06-18`; initialization always returns this supported version.

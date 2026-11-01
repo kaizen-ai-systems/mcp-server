@@ -2,92 +2,76 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"strconv"
-	"strings"
 )
 
-// MCP clients use Content-Length framing over stdio, but we also accept
-// line-delimited JSON for local smoke tests.
+var errMessageTooLarge = errors.New("message exceeds 1 MiB input limit")
+
+// readMessage accepts UTF-8 JSON lines, including a final line without LF.
+// Oversize is terminal: do not drain an unbounded line to find its terminator.
 func readMessage(reader *bufio.Reader) ([]byte, error) {
-	firstLine, err := reader.ReadString('\n')
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			trimmed := strings.TrimSpace(firstLine)
-			if trimmed == "" {
-				return nil, io.EOF
-			}
-			if strings.HasPrefix(trimmed, "{") {
-				return []byte(trimmed), nil
-			}
-		}
-		return nil, err
-	}
-
-	trimmed := strings.TrimSpace(firstLine)
-	if trimmed == "" {
-		return nil, fmt.Errorf("received empty message")
-	}
-	if strings.HasPrefix(trimmed, "{") {
-		return []byte(trimmed), nil
-	}
-
-	headers := []string{strings.TrimRight(firstLine, "\r\n")}
+	var line []byte
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
+		chunk, err := reader.ReadSlice('\n')
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
 			return nil, err
 		}
-		clean := strings.TrimRight(line, "\r\n")
-		if clean == "" {
-			break
+		// Reserve at most two extra bytes for CRLF, excluded from the limit.
+		if len(chunk) > maxMessageBytes+2-len(line) {
+			return nil, errMessageTooLarge
 		}
-		headers = append(headers, clean)
-	}
-
-	length, err := parseContentLength(headers)
-	if err != nil {
-		return nil, err
-	}
-
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return nil, fmt.Errorf("failed to read payload: %w", err)
-	}
-	return payload, nil
-}
-
-func parseContentLength(headers []string) (int, error) {
-	for _, header := range headers {
-		parts := strings.SplitN(header, ":", 2)
-		if len(parts) != 2 {
+		if size := len(line) + len(chunk); size > cap(line) {
+			capacity := 2*cap(line) + len(chunk)
+			if capacity > maxMessageBytes+2 {
+				capacity = maxMessageBytes + 2
+			}
+			grown := make([]byte, len(line), capacity)
+			copy(grown, line)
+			line = grown
+		}
+		line = append(line, chunk...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if len(line) > maxMessageBytes && !(len(line) == maxMessageBytes+1 && line[len(line)-1] == '\r') {
+				return nil, errMessageTooLarge
+			}
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			continue
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
 		}
-		rawLen := strings.TrimSpace(parts[1])
-		length, err := strconv.Atoi(rawLen)
-		if err != nil || length <= 0 {
-			return 0, fmt.Errorf("invalid Content-Length value: %q", rawLen)
+		if len(line) > maxMessageBytes {
+			return nil, errMessageTooLarge
 		}
-		return length, nil
+		if len(bytes.TrimSpace(line)) != 0 {
+			return line, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return nil, io.EOF
+		}
+		line = line[:0]
 	}
-	return 0, fmt.Errorf("missing Content-Length header")
 }
 
 func writeMessage(writer *bufio.Writer, response jsonRPCResponse) error {
+	if response.Error != nil {
+		response.Result = nil
+	} else if response.Result == nil {
+		response.Result = map[string]interface{}{}
+	}
 	payload, err := json.Marshal(response)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+	if _, err := writer.Write(payload); err != nil {
 		return err
 	}
-	if _, err := writer.Write(payload); err != nil {
+	if err := writer.WriteByte('\n'); err != nil {
 		return err
 	}
 	return writer.Flush()

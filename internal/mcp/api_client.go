@@ -81,9 +81,13 @@ func (c *kaizenAPIClient) callWithHeaders(ctx context.Context, method, path stri
 	var decoded map[string]interface{}
 	if len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, &decoded); err != nil {
-			return nil, fmt.Errorf("failed to decode response: %w", err)
+			if resp.StatusCode < 400 {
+				return nil, fmt.Errorf("failed to decode response: %w", err)
+			}
+			decoded = nil
 		}
-	} else {
+	}
+	if decoded == nil && (len(respBody) == 0 || resp.StatusCode >= 400) {
 		decoded = map[string]interface{}{}
 	}
 

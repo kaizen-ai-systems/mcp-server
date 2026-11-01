@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Server struct {
@@ -42,23 +45,31 @@ func (s *Server) Serve() error {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
+			if errors.Is(err, errMessageTooLarge) {
+				if writeErr := writeMessage(s.writer, jsonRPCResponse{
+					JSONRPC: "2.0",
+					Error:   &jsonRPCError{Code: -32600, Message: "invalid request"},
+				}); writeErr != nil {
+					return fmt.Errorf("failed to write response: %w", writeErr)
+				}
+			}
 			return fmt.Errorf("failed to read message: %w", err)
 		}
 
-		var req jsonRPCRequest
-		if err := json.Unmarshal(payload, &req); err != nil {
-			s.logger.Warn("dropping invalid json-rpc payload", "error", err)
+		req, rpcErr := decodeRequest(payload)
+		if rpcErr != nil {
+			s.logger.Warn("invalid json-rpc payload", "code", rpcErr.Code)
+			if err := writeMessage(s.writer, jsonRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}); err != nil {
+				return fmt.Errorf("failed to write response: %w", err)
+			}
 			continue
 		}
 
-		if req.Method == "notifications/initialized" || req.Method == "initialized" {
+		if len(req.ID) == 0 {
 			continue
 		}
 
-		var (
-			result interface{}
-			rpcErr *jsonRPCError
-		)
+		var result interface{}
 
 		switch req.Method {
 		case "initialize":
@@ -82,18 +93,9 @@ func (s *Server) Serve() error {
 			rpcErr = &jsonRPCError{Code: -32601, Message: "method not found", Data: req.Method}
 		}
 
-		if len(req.ID) == 0 {
-			continue
-		}
-
-		var id interface{}
-		if err := json.Unmarshal(req.ID, &id); err != nil {
-			id = string(req.ID)
-		}
-
 		resp := jsonRPCResponse{
 			JSONRPC: "2.0",
-			ID:      id,
+			ID:      req.ID,
 			Result:  result,
 			Error:   rpcErr,
 		}
@@ -101,6 +103,43 @@ func (s *Server) Serve() error {
 			return fmt.Errorf("failed to write response: %w", err)
 		}
 	}
+}
+
+func decodeRequest(payload []byte) (jsonRPCRequest, *jsonRPCError) {
+	var req jsonRPCRequest
+	if !utf8.Valid(payload) || !json.Valid(payload) {
+		return req, &jsonRPCError{Code: -32700, Message: "parse error"}
+	}
+	err := json.Unmarshal(payload, &req)
+	if len(req.ID) != 0 && !validRequestID(req.ID) {
+		req.ID = nil
+		return req, &jsonRPCError{Code: -32600, Message: "invalid request"}
+	}
+	if err != nil || req.JSONRPC != "2.0" || req.Method == "" {
+		return req, &jsonRPCError{Code: -32600, Message: "invalid request"}
+	}
+	return req, nil
+}
+
+// validRequestID receives a JSON-valid token. Bound the exponent before Rat
+// can allocate its power of ten; the input limit already bounds the mantissa.
+func validRequestID(raw json.RawMessage) bool {
+	if raw[0] == '"' {
+		return true
+	}
+	if raw[0] != '-' && (raw[0] < '0' || raw[0] > '9') {
+		return false
+	}
+	token := string(raw)
+	if i := strings.IndexAny(token, "eE"); i >= 0 {
+		exponent := strings.TrimLeft(token[i+1:], "+-")
+		magnitude, err := strconv.ParseUint(exponent, 10, 64)
+		if err != nil || magnitude > maxMessageBytes {
+			return false
+		}
+	}
+	value, ok := new(big.Rat).SetString(token)
+	return ok && value.IsInt()
 }
 
 func (s *Server) handleToolCall(raw json.RawMessage) (interface{}, *jsonRPCError) {
@@ -269,7 +308,7 @@ func (s *Server) callAkumaQueryInteractive(ctx context.Context, args map[string]
 	}
 
 	// Interactive keeps its own call path because it preserves typed non-2xx
-	// bodies and converts HTTP 200 non-completed envelopes into MCP tool errors.
+	// bodies; rejected and future HTTP 200 statuses remain MCP tool errors.
 	data, err := s.callPreservingTypedBodyWithHeaders(ctx, http.MethodPost, "/v1/akuma/queries/interactive", payload, headers, []int{
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
@@ -290,7 +329,7 @@ func (s *Server) callAkumaQueryInteractive(ctx context.Context, args map[string]
 	if err := validateAkumaInteractiveResponse(data); err != nil {
 		return nil, err
 	}
-	if data["status"] != "completed" {
+	if data["status"] != "completed" && data["status"] != "needs_clarification" {
 		return nil, &typedBodyError{Status: http.StatusOK, Body: data, Msg: fmt.Sprintf("interactive query %s", data["status"])}
 	}
 	return data, nil

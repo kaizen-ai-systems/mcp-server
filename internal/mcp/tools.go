@@ -22,7 +22,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "akuma.query_interactive",
-			Description: "Translate natural language into SQL using the interactive Akuma protocol. Two call shapes share this tool: (1) Fresh query — supply `dialect` and `prompt` (required); optional `mode`, `maxRows`, `sourceId`, `guardrails`. (2) Clarification consume — supply `clarificationToken`, `optionId`, and `idempotencyKey` (all required) on a follow-up call after the server returned a `needs_clarification` envelope. Returns a status envelope (completed | needs_clarification | rejected). needs_clarification responses include a clarificationToken and a discrete option list. Non-completed statuses surface as MCP tool errors with the full envelope in structuredContent.",
+			Description: "Translate natural language into SQL using the interactive Akuma protocol. Two call shapes share this tool: (1) Fresh query — supply `dialect` and `prompt` (required); optional `mode`, `maxRows`, `sourceId`, `guardrails`. (2) Clarification consume — supply `clarificationToken`, `optionId`, and `idempotencyKey` (all required) on a follow-up call after the server returned a `needs_clarification` envelope. Returns a status envelope (completed | needs_clarification | rejected). needs_clarification is a normal follow-up result without isError, including a clarificationToken and a discrete option list in both text and structuredContent. Rejected and future statuses surface as MCP tool errors with the full envelope in structuredContent.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

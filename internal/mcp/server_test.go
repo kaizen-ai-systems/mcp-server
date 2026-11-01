@@ -1,14 +1,20 @@
 package mcp
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestToolDefinitionsIncludesAkumaSchema(t *testing.T) {
@@ -639,8 +645,7 @@ func TestHandleToolCallAkumaQueryInteractiveAllowsFutureStatusWithoutResult(t *t
 }
 
 func TestHandleToolCallAkumaQueryInteractiveNeedsClarification(t *testing.T) {
-	// PR 1b: validate the new known status flows through structuredContent
-	// (so the LLM frontend can present options) and surfaces as a tool error.
+	// A validated clarification is a normal follow-up result in both formats.
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"status":"needs_clarification",
@@ -681,8 +686,8 @@ func TestHandleToolCallAkumaQueryInteractiveNeedsClarification(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected result map, got %T", result)
 	}
-	if isError, ok := response["isError"].(bool); !ok || !isError {
-		t.Fatalf("expected isError=true (caller must act), got %#v", response["isError"])
+	if _, present := response["isError"]; present {
+		t.Fatalf("expected isError to be absent, got %#v", response["isError"])
 	}
 	content, ok := response["structuredContent"].(map[string]interface{})
 	if !ok {
@@ -697,6 +702,17 @@ func TestHandleToolCallAkumaQueryInteractiveNeedsClarification(t *testing.T) {
 	}
 	if token, _ := clarification["clarificationToken"].(string); token != "tok-123" {
 		t.Fatalf("expected token in clarification, got %#v", clarification["clarificationToken"])
+	}
+	textContent, ok := response["content"].([]map[string]string)
+	if !ok || len(textContent) != 1 || !strings.Contains(textContent[0]["text"], `"clarificationToken": "tok-123"`) {
+		t.Fatalf("expected token in text content, got %#v", response["content"])
+	}
+	var decodedText map[string]interface{}
+	if err := json.Unmarshal([]byte(textContent[0]["text"]), &decodedText); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decodedText, content) {
+		t.Fatalf("text and structured content differ: %#v vs %#v", decodedText, content)
 	}
 }
 
@@ -1253,5 +1269,261 @@ func TestHandleToolCallEnzanPricingOffersUpsertEnforcesExactlyOne(t *testing.T) 
 	}
 	if !strings.Contains(capturedGPU[0].Body, `"gpu"`) || strings.Contains(capturedGPU[0].Body, `"llm"`) {
 		t.Fatalf("expected request body to contain gpu but not llm, got %s", capturedGPU[0].Body)
+	}
+}
+
+func serveForTest(t *testing.T, s *Server, input io.Reader) (string, error) {
+	t.Helper()
+	var output bytes.Buffer
+	s.reader = bufio.NewReader(input)
+	s.writer = bufio.NewWriter(&output)
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	err := s.Serve()
+	return output.String(), err
+}
+
+func TestServeInvalidRequestsDoNotInvokeTools(t *testing.T) {
+	const call = `"method":"tools/call","params":{"name":"sozo.schemas"}`
+	cases := []struct {
+		name, input, id string
+		code            int
+	}{
+		{"not JSON", "not json", "null", -32700},
+		{"truncated JSON", `{"jsonrpc":"2.0","id":1,`, "null", -32700},
+		{"invalid UTF-8", "{\"jsonrpc\":\"2.0\",\"id\":\"\xff\"," + call + "}", "null", -32700},
+		{"empty batch", `[]`, "null", -32600},
+		{"batch", `[{"jsonrpc":"2.0","id":1,` + call + `}]`, "null", -32600},
+		{"number", `1`, "null", -32600},
+		{"string", `"x"`, "null", -32600},
+		{"null", `null`, "null", -32600},
+		{"wrong method type", `{"jsonrpc":"2.0","method":123,"id":9007199254740993}`, "9007199254740993", -32600},
+		{"wrong version", `{"jsonrpc":"1.0","id":"request",` + call + `}`, `"request"`, -32600},
+		{"missing version", `{"id":0,` + call + `}`, "0", -32600},
+		{"missing method", `{"jsonrpc":"2.0","id":""}`, `""`, -32600},
+		{"response object", `{"jsonrpc":"2.0","id":1,"result":{}}`, "1", -32600},
+		{"malformed notification", `{"jsonrpc":"1.0",` + call + `}`, "null", -32600},
+	}
+	for _, id := range []string{`null`, `true`, `false`, `1.5`, `1e-3`, `1.0000000000000001`, `9007199254740993.1`, `{}`, `[]`, fmt.Sprintf("0e%d", testMessageLimit+1), fmt.Sprintf("0e-%d", testMessageLimit+1), `0e999999999999999999999999`, `0e-999999999999999999999999`} {
+		cases = append(cases, struct {
+			name, input, id string
+			code            int
+		}{"invalid ID " + id, `{"jsonrpc":"2.0","id":` + id + `,` + call + `}`, "null", -32600})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured []capturedRequest
+			s, cleanup := newPricingTestServer(t, &captured, nil)
+			defer cleanup()
+			output, err := serveForTest(t, s, strings.NewReader(tc.input+"\n"+`{"jsonrpc":"2.0","id":2,"method":"ping"}`+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := "invalid request"
+			if tc.code == -32700 {
+				message = "parse error"
+			}
+			want := fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":%d,\"message\":%q}}\n", tc.id, tc.code, message) + "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n"
+			if output != want {
+				t.Fatalf("got %q, want %q", output, want)
+			}
+			if len(captured) != 0 {
+				t.Fatalf("invalid message invoked tools: %+v", captured)
+			}
+		})
+	}
+}
+
+func TestServePreservesExactIDs(t *testing.T) {
+	for _, id := range []string{`9007199254740993`, `0`, `-1`, `""`, `"1"`, `"\u0061"`, `1`, `1.0`, `1e3`, `1E+3`, `1000e-3`, `-0.0`, fmt.Sprintf("0e-%d", testMessageLimit), fmt.Sprintf("0e%d", testMessageLimit)} {
+		t.Run(id, func(t *testing.T) {
+			input := `{"jsonrpc":"2.0","id":` + id + `,"method":"ping"}`
+			output, err := serveForTest(t, &Server{}, strings.NewReader(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := `{"jsonrpc":"2.0","id":` + id + `,"result":{}}` + "\n"
+			if output != want {
+				t.Fatalf("got %q, want %q", output, want)
+			}
+		})
+	}
+}
+
+func TestServeNotificationsDoNotInvokeTools(t *testing.T) {
+	var captured []capturedRequest
+	s, cleanup := newPricingTestServer(t, &captured, nil)
+	defer cleanup()
+	input := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"sozo.schemas"}}` + "\n"
+	for _, method := range []string{"notifications/initialized", "notifications/cancelled", "initialized", "unknown"} {
+		input += fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"method\":%q}\n", method)
+	}
+	output, err := serveForTest(t, s, strings.NewReader(input))
+	if err != nil || output != "" || len(captured) != 0 {
+		t.Fatalf("notifications: output %q, error %v, upstream calls %+v", output, err, captured)
+	}
+}
+
+func TestServeInitializeSupportedProtocol(t *testing.T) {
+	for _, requested := range []string{"2025-06-18", "2024-11-05", "1999-01-01"} {
+		t.Run(requested, func(t *testing.T) {
+			input := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":%q}}`, requested)
+			output, err := serveForTest(t, &Server{}, strings.NewReader(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Result struct {
+					ProtocolVersion string `json:"protocolVersion"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal([]byte(output), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Result.ProtocolVersion != "2025-06-18" {
+				t.Fatalf("unexpected protocol version %q", response.Result.ProtocolVersion)
+			}
+		})
+	}
+}
+
+func TestServeOversizeTerminates(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n", ""} {
+		input := strings.Repeat("x", testMessageLimit+1) + ending
+		if ending != "" {
+			input += `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n"
+		}
+		output, err := serveForTest(t, &Server{}, strings.NewReader(input))
+		if !errors.Is(err, errMessageTooLarge) {
+			t.Fatalf("expected terminal oversize error, got %v", err)
+		}
+		want := "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}\n"
+		if output != want {
+			t.Fatalf("expected only oversize response, got %q", output)
+		}
+	}
+}
+
+func TestServeDispatchResponseShape(t *testing.T) {
+	var captured []capturedRequest
+	s, cleanup := newPricingTestServer(t, &captured, map[string]string{"GET /v1/sozo/schemas": `{"schemas":[]}`})
+	defer cleanup()
+	input := "\n \t\r\n" + `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sozo.schemas"}}` + "\n\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unknown-tool"}}` + "\n" +
+		`{"jsonrpc":"2.0","id":3,"method":"unknown-method"}`
+	output, err := serveForTest(t, s, strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	if len(lines) != 3 || len(captured) != 1 {
+		t.Fatalf("expected three responses and one upstream call: %q, %+v", output, captured)
+	}
+	var success map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[0]), &success); err != nil {
+		t.Fatal(err)
+	}
+	if success["result"] == nil || success["error"] != nil {
+		t.Fatalf("unexpected success shape: %s", lines[0])
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(success["result"], &result); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result["structuredContent"], map[string]interface{}{"schemas": []interface{}{}}) {
+		t.Fatalf("unexpected tool result: %#v", result)
+	}
+	for i, want := range []string{
+		`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"unknown tool","data":"unknown-tool"}}`,
+		`{"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"method not found","data":"unknown-method"}}`,
+	} {
+		if lines[i+1] != want {
+			t.Fatalf("got %q, want %q", lines[i+1], want)
+		}
+	}
+}
+
+func TestServeReadError(t *testing.T) {
+	wantErr := errors.New("read failed")
+	output, err := serveForTest(t, &Server{}, iotest.ErrReader(wantErr))
+	if !errors.Is(err, wantErr) || output != "" {
+		t.Fatalf("got output %q, error %v", output, err)
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveRejectsMalformedClarification(t *testing.T) {
+	var captured []capturedRequest
+	s, cleanup := newPricingTestServer(t, &captured, map[string]string{
+		"POST /v1/akuma/queries/interactive": `{"status":"needs_clarification","clarification":{"question":"Which window?","options":[{"id":"7d","label":"Seven days"},{"id":"30d","label":"Thirty days"}],"expiresAt":"2030-01-01T00:00:00Z"}}`,
+	})
+	defer cleanup()
+	result, rpcErr := s.handleToolCall(json.RawMessage(`{"name":"akuma.query_interactive","arguments":{"dialect":"postgres","prompt":"show usage"}}`))
+	if rpcErr != nil {
+		t.Fatalf("unexpected rpc error: %+v", rpcErr)
+	}
+	response := result.(map[string]interface{})
+	if response["isError"] != true || response["content"].([]map[string]string)[0]["text"] != "interactive query needs_clarification response missing clarificationToken" {
+		t.Fatalf("malformed clarification must be a tool error: %#v", response)
+	}
+}
+
+func TestHandleToolCallAkumaQueryInteractiveNonJSONResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		preserved  bool
+	}{
+		{"HTML 503", "<html>private diagnostic</html>", 503, true},
+		{"HTML 502", "<html>private diagnostic</html>", 502, false},
+		{"null 503", "null", 503, true},
+		{"array 503", "[]", 503, true},
+		{"partial object 503", `{"error":"private diagnostic",`, 503, true},
+		{"empty 503", "", 503, true},
+		{"HTML 200", "<html>private diagnostic</html>", 200, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer api.Close()
+			s := &Server{client: &kaizenAPIClient{baseURL: api.URL, apiKey: "test", httpClient: api.Client()}}
+			result, rpcErr := s.handleToolCall(json.RawMessage(`{"name":"akuma.query_interactive","arguments":{"dialect":"postgres","prompt":"show usage"}}`))
+			if rpcErr != nil {
+				t.Fatalf("unexpected rpc error: %+v", rpcErr)
+			}
+			response := result.(map[string]interface{})
+			if response["isError"] != true {
+				t.Fatalf("expected tool error: %#v", response)
+			}
+			text := response["content"].([]map[string]string)[0]["text"]
+			if tc.status == 200 {
+				if !strings.HasPrefix(text, "failed to decode response:") {
+					t.Fatalf("expected decode error, got %q", text)
+				}
+			} else {
+				want := fmt.Sprintf("Kaizen API request failed (status=%d)", tc.status)
+				if tc.preserved {
+					want += ":\n{}"
+				}
+				if text != want {
+					t.Fatalf("got %q, want %q", text, want)
+				}
+			}
+			structured, present := response["structuredContent"]
+			if tc.preserved {
+				if !present || !reflect.DeepEqual(structured, map[string]interface{}{}) {
+					t.Fatalf("expected empty structured object, got %#v", structured)
+				}
+			} else if present {
+				t.Fatalf("unexpected structuredContent: %#v", structured)
+			}
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(encoded, []byte("private diagnostic")) || strings.Contains(text, "<html>") {
+				t.Fatalf("raw body leaked into result: %s", encoded)
+			}
+		})
 	}
 }

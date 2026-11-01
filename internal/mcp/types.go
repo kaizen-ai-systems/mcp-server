@@ -10,10 +10,10 @@ type jsonRPCRequest struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string        `json:"jsonrpc"`
-	ID      interface{}   `json:"id,omitempty"`
-	Result  interface{}   `json:"result,omitempty"`
-	Error   *jsonRPCError `json:"error,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  interface{}     `json:"result,omitempty"`
+	Error   *jsonRPCError   `json:"error,omitempty"`
 }
 
 type jsonRPCError struct {
