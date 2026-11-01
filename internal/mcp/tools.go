@@ -462,7 +462,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "sozo.generate",
-			Description: "Generate synthetic tabular data from a schema or named preset. Rejects negative string lengths, invalid integer or datetime windows, and mismatched choice weight counts as invalid requests. Integer ranges must contain fewer than 2^63 values.",
+			Description: "Generate synthetic tabular data from a schema or named preset. Server limits: 1-100,000 records, 256 columns, 128 UTF-8 bytes per column name or selected schemaName, 4,096 bytes per raw spec, string lengths 0-4,096, 64 correlations, and 65,536 metadata bytes (column names/specs plus correlation keys/directions). A schema-dependent generation budget may allow fewer records; the error states the maximum. A nonempty custom schema ignores schemaName; an empty schema falls back to the preset. Rejects invalid integer or datetime windows and mismatched choice weight counts. Integer ranges must contain fewer than 2^63 values.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
